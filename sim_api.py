@@ -6,7 +6,10 @@ Provides thread-safe interface for simulation control.
 import threading
 import time
 from typing import Dict, Any, Callable, List
-from sim import Blockchain, Miner, Network, DifficultyController
+from sim.core import Blockchain
+from sim.miner import Miner
+from sim.network import Network
+from sim.difficulty import DifficultyController
 
 # Global simulation state
 _simulation_lock = threading.Lock()

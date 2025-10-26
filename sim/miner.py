@@ -116,3 +116,11 @@ class Miner:
     def set_hash_rate(self, rate: float) -> None:
         """Update the miner's hash rate."""
         self.hash_rate = rate
+        
+    def get_hash_rate(self) -> float:
+        """Get the current hash rate."""
+        return self.hash_rate
+        
+    def is_running(self) -> bool:
+        """Check if the miner is currently running."""
+        return self.is_mining

@@ -51,10 +51,6 @@ class DifficultyController:
             
         return self.current_difficulty
         
-    def get_current_difficulty(self) -> int:
-        """Get the current difficulty level."""
-        return self.current_difficulty
-        
     def set_target_block_time(self, target_time: float) -> None:
         """Set the target block time for difficulty adjustment."""
         self.target_block_time = target_time
@@ -72,3 +68,7 @@ class DifficultyController:
         # Typically adjust every N blocks or after certain time intervals
         current_time = time.time()
         return (current_time - self.last_adjustment_time) > 60.0  # Adjust every minute
+        
+    def get_current_difficulty(self) -> int:
+        """Get the current difficulty level."""
+        return self.current_difficulty
