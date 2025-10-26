@@ -40,6 +40,50 @@ pytest
 - `utils/`: Utility functions for hashing
 - `tests/`: Unit tests
 
+## UI Development (Person A)
+
+### Running the UI Locally
+
+1. Set up virtual environment:
+```bash
+python -m venv .venv
+.venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+2. Run the Streamlit application:
+```bash
+streamlit run app.py
+```
+
+### Event Format Expected from sim_api
+
+The UI expects events from `sim_api` in the following format:
+
+```python
+{
+    "type": "block_found" | "block_accepted" | "block_stale" | "miner_status",
+    "block": {
+        "height": int,
+        "hash": str,
+        "prev_hash": str,
+        "nonce": int,
+        "miner_id": str,
+        "timestamp": float,
+        "accepted": bool
+    },
+    "miner_id": str,  # For miner_status events
+    "hashrate": int,  # For miner_status events
+    "timestamp": float
+}
+```
+
+### Important Note
+
+**Do not modify `sim/` or `sim_api.py` — simulation core is owned by Person B.**
+
+The UI is designed to work with mock data when `sim_api` is not available, allowing for independent development and testing of the user interface.
+
 ## TODO
 
 - Implement full mining logic
