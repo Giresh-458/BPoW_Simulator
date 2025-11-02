@@ -30,25 +30,24 @@ class DifficultyController:
         Returns:
             New difficulty value
         """
-        # TODO: Implement difficulty adjustment algorithm
-        # - Calculate average block time from recent blocks
-        # - Compare to target block time
-        # - Adjust difficulty up/down accordingly
-        # - Implement bounds checking
-        
         if not recent_block_times:
             return self.current_difficulty
-            
+
+        # Compute average block time from provided samples
         avg_block_time = sum(recent_block_times) / len(recent_block_times)
-        
-        # Simple adjustment logic
-        if avg_block_time < self.target_block_time * 0.8:
-            # Blocks coming too fast, increase difficulty
-            self.current_difficulty = min(self.current_difficulty + 1, 8)
-        elif avg_block_time > self.target_block_time * 1.2:
-            # Blocks coming too slow, decrease difficulty
+
+        # Use a conservative adjustment step to avoid oscillation.
+        # If blocks are significantly faster than target -> increase difficulty by 1.
+        if avg_block_time < self.target_block_time * 0.9:
+            self.current_difficulty = min(self.current_difficulty + 1, 32)
+        # If blocks are significantly slower than target -> decrease difficulty by 1.
+        elif avg_block_time > self.target_block_time * 1.1:
             self.current_difficulty = max(self.current_difficulty - 1, 1)
-            
+
+        # Reset recorded times after adjustment and update last adjustment timestamp
+        self.block_times = []
+        self.last_adjustment_time = time.time()
+
         return self.current_difficulty
         
     def set_target_block_time(self, target_time: float) -> None:
@@ -64,10 +63,9 @@ class DifficultyController:
             
     def should_adjust_difficulty(self) -> bool:
         """Check if it's time to adjust difficulty."""
-        # TODO: Implement timing logic for difficulty adjustments
-        # Typically adjust every N blocks or after certain time intervals
-        current_time = time.time()
-        return (current_time - self.last_adjustment_time) > 60.0  # Adjust every minute
+        # Use a block-count cadence: adjust when we have accumulated N samples.
+        ADJUST_WINDOW = 5
+        return len(self.block_times) >= ADJUST_WINDOW
         
     def get_current_difficulty(self) -> int:
         """Get the current difficulty level."""

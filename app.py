@@ -4,19 +4,34 @@ Provides UI controls and displays simulation results.
 """
 
 import streamlit as st
+
+# Must be the first Streamlit command
+st.set_page_config(
+    page_title="PoW Blockchain Simulator",
+    page_icon="⛏️",
+    layout="wide"
+)
+
 import threading
 import time
 import json
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+import sys
+from pathlib import Path
 
-# Import simulation API
+# Add project root to Python path to enable imports
+project_root = Path(__file__).parent
+if str(project_root) not in sys.path:
+    sys.path.append(str(project_root))
+
+# Import simulation API (with proper path handling)
 try:
     from sim_api import start_simulation, stop_simulation, set_miner_rate, submit_data, get_stats
     SIM_API_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     SIM_API_AVAILABLE = False
-    st.warning("⚠️ sim_api not available yet — UI loaded in mock mode")
+    st.warning(f"⚠️ sim_api not available yet — UI loaded in mock mode. Error: {e}")
 
 # Import UI helpers
 try:
@@ -36,17 +51,23 @@ if 'events' not in st.session_state:
 if 'sim_running' not in st.session_state:
     st.session_state['sim_running'] = False
 
-def ui_callback(event: Dict[str, Any]) -> None:
+def process_simulation_events() -> None:
     """
-    Callback function to handle simulation events and update UI.
-    This will be called by sim_api from simulation threads.
-    TODO: Ensure sim_api calls this from main thread or uses proper queue mechanism.
+    Process pending simulation events from the event queue.
+    This should be called from the main Streamlit thread.
     """
-    st.session_state['events'].append(event)
-    
-    # Keep only recent events to prevent memory issues
-    if len(st.session_state['events']) > 1000:
-        st.session_state['events'] = st.session_state['events'][-500:]
+    if SIM_API_AVAILABLE:
+        try:
+            from sim_api import get_pending_events
+            events = get_pending_events()
+            for event in events:
+                st.session_state['events'].append(event)
+                
+                # Keep only recent events to prevent memory issues
+                if len(st.session_state['events']) > 1000:
+                    st.session_state['events'] = st.session_state['events'][-500:]
+        except ImportError:
+            pass
 
 # Mock mode for testing UI without sim_api
 if not SIM_API_AVAILABLE:
@@ -79,12 +100,7 @@ if not SIM_API_AVAILABLE:
             mock_ui_callback()
             st.session_state['last_mock_time'] = time.time()
 
-# Page configuration
-st.set_page_config(
-    page_title="PoW Blockchain Simulator",
-    page_icon="⛏️",
-    layout="wide"
-)
+
 
 # Main title
 st.title("⛏️ Proof-of-Work Blockchain Simulator")
@@ -156,7 +172,7 @@ with col1:
             }
             
             if SIM_API_AVAILABLE:
-                start_simulation(config, ui_callback)
+                start_simulation(config, None)  # No longer need callback
             else:
                 st.info("Mock mode: Simulation started")
             
@@ -312,6 +328,9 @@ if st.session_state['sim_running']:
         block_area.markdown(block_html, unsafe_allow_html=True)
     else:
         block_area.info("No blocks mined yet...")
+    
+    # Process simulation events
+    process_simulation_events()
     
     # Update mining log
     log_html = render_mining_log(st.session_state['events'], max_lines=200)

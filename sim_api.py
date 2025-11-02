@@ -5,6 +5,7 @@ Provides thread-safe interface for simulation control.
 
 import threading
 import time
+import queue
 from typing import Dict, Any, Callable, List
 from sim.core import Blockchain
 from sim.miner import Miner
@@ -19,8 +20,9 @@ _miners: List[Miner] = []
 _network: Network = None
 _difficulty_controller: DifficultyController = None
 _ui_callback: Callable = None
+_event_queue: queue.Queue = queue.Queue()
 
-def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
+def start_simulation(config: Dict[str, Any], ui_callback: Callable = None) -> None:
     """
     Start the blockchain simulation with given configuration.
     
@@ -53,24 +55,27 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
         # Start network
         _network.start()
         
-        # Start miners
+        # Set initial work and start miners
+        head = _blockchain.get_latest_block()
+        prev_hash = head.hash if head else "0"*64
+        height = head.height if head else 0
         for miner in _miners:
+            miner.set_work(prev_hash, height, config.get('data','Hello Blockchain!'), _blockchain.difficulty)
             miner.start(
                 on_block_found=_on_block_found,
                 use_real_sha256=config.get('use_real_sha256', False),
-                difficulty=config.get('difficulty', 4),
+                difficulty=_blockchain.difficulty,
                 data=config.get('data', 'Hello Blockchain!')
             )
             
         _simulation_running = True
         
-        # Notify UI
-        if _ui_callback:
-            _ui_callback({
-                'timestamp': time.time(),
-                'message': f'Started simulation with {num_miners} miners',
-                'type': 'simulation_start'
-            })
+        # Add start event to queue
+        _event_queue.put({
+            'timestamp': time.time(),
+            'message': f'Started simulation with {num_miners} miners',
+            'type': 'simulation_start'
+        })
 
 def stop_simulation() -> None:
     """Stop the running simulation."""
@@ -90,13 +95,12 @@ def stop_simulation() -> None:
             
         _simulation_running = False
         
-        # Notify UI
-        if _ui_callback:
-            _ui_callback({
-                'timestamp': time.time(),
-                'message': 'Simulation stopped',
-                'type': 'simulation_stop'
-            })
+        # Add stop event to queue
+        _event_queue.put({
+            'timestamp': time.time(),
+            'message': 'Simulation stopped',
+            'type': 'simulation_stop'
+        })
 
 def set_miner_rate(miner_id: str, rate: float) -> None:
     """
@@ -126,17 +130,36 @@ def submit_data(data_str: str) -> None:
         if not _simulation_running:
             return
             
-        # TODO: Implement data submission to mining queue
-        # This should update all miners with new data to mine
+        # Update all miners with new data while preserving their current work
+        head = _blockchain.get_latest_block()
+        prev_hash = head.hash if head else "0" * 64
+        height = head.height if head else 0
         for miner in _miners:
-            miner.current_data = data_str
+            miner.set_work(prev_hash, height, data_str, _blockchain.difficulty)
             
-        if _ui_callback:
-            _ui_callback({
-                'timestamp': time.time(),
-                'message': f'Submitted data: {data_str}',
-                'type': 'data_submission'
-            })
+        # Add data submission event to queue
+        _event_queue.put({
+            'timestamp': time.time(),
+            'message': f'Submitted data: {data_str}',
+            'type': 'data_submission'
+        })
+
+def get_pending_events() -> List[Dict[str, Any]]:
+    """
+    Get all pending events from the event queue.
+    This should be called from the main thread (Streamlit).
+    
+    Returns:
+        List of pending events
+    """
+    events = []
+    try:
+        while True:
+            event = _event_queue.get_nowait()
+            events.append(event)
+    except queue.Empty:
+        pass
+    return events
 
 def get_stats() -> Dict[str, Any]:
     """
@@ -179,6 +202,19 @@ def get_stats() -> Dict[str, Any]:
             'difficulty': _difficulty_controller.get_current_difficulty() if _difficulty_controller else 0
         }
 
+def _broadcast_new_work_to_miners():
+    """Set current head/difficulty as work for all miners."""
+    head = _blockchain.get_latest_block()
+    prev_hash = head.hash if head else "0" * 64
+    height = head.height if head else 0
+    current_data = _miners[0].current_data if _miners else 'Hello Blockchain!'
+    current_difficulty = _blockchain.difficulty
+    for miner in _miners:
+        try:
+            miner.set_work(prev_hash, height, current_data, current_difficulty)
+        except Exception:
+            pass
+
 def _on_block_found(block) -> None:
     """
     Callback when a miner finds a new block.
@@ -189,28 +225,70 @@ def _on_block_found(block) -> None:
     with _simulation_lock:
         if not _simulation_running:
             return
-            
-        # Add block to blockchain
-        if _blockchain.add_block(block):
-            # Notify UI
-            if _ui_callback:
-                _ui_callback({
-                    'timestamp': time.time(),
-                    'message': f'Block #{block.height} found by {block.miner_id}',
-                    'type': 'block_found',
-                    'block': block
-                })
-                
-            # Record block time for difficulty adjustment
-            if _difficulty_controller:
-                # TODO: Calculate actual block time
-                _difficulty_controller.record_block_time(10.0)  # Placeholder
-                
-                # Adjust difficulty if needed
-                if _difficulty_controller.should_adjust_difficulty():
-                    new_difficulty = _difficulty_controller.adjust_difficulty(_difficulty_controller.block_times)
-                    _blockchain.set_difficulty(new_difficulty)
-                    
-                    # Update all miners with new difficulty
-                    for miner in _miners:
-                        miner.difficulty = new_difficulty
+
+        # Capture previous head to compute block interval
+        prev_head = _blockchain.get_latest_block()
+
+        # Announce that a block was found (discovery)
+        discovery_event = {
+            'timestamp': time.time(),
+            'message': f'Block discovered (candidate) by {block.miner_id}',
+            'type': 'block_found',
+            'block': {
+                'height': block.height,
+                'hash': block.hash,
+                'prev_hash': block.prev_hash,
+                'miner_id': block.miner_id,
+                'data': block.data,
+                'timestamp': block.timestamp,
+                'nonce': block.nonce,
+                'accepted': False
+            }
+        }
+        _event_queue.put(discovery_event)
+
+        # Try to add block to blockchain (validation happens inside)
+        added = _blockchain.add_block(block)
+
+        if added:
+            accepted_event = discovery_event.copy()
+            accepted_event['timestamp'] = time.time()
+            accepted_event['message'] = f'Block #{block.height} accepted (by {block.miner_id})'
+            accepted_event['type'] = 'block_accepted'
+            accepted_event['block']['accepted'] = True
+            _event_queue.put(accepted_event)
+
+            # If we had a previous head, compute block time
+            if prev_head:
+                block_time = block.timestamp - prev_head.timestamp
+                if _difficulty_controller:
+                    _difficulty_controller.record_block_time(block_time)
+
+                    # Adjust difficulty if controller desires
+                    if _difficulty_controller.should_adjust_difficulty():
+                        new_difficulty = _difficulty_controller.adjust_difficulty(_difficulty_controller.block_times)
+                        _blockchain.set_difficulty(new_difficulty)
+                        # Update miners' difficulty/work
+                        for miner in _miners:
+                            miner.difficulty = new_difficulty
+                        # Broadcast the change
+                        _event_queue.put({
+                            'timestamp': time.time(),
+                            'message': f'Difficulty adjusted to {new_difficulty}',
+                            'type': 'difficulty_update',
+                            'difficulty': new_difficulty
+                        })
+
+            # Broadcast new work (new head) to miners
+            _broadcast_new_work_to_miners()
+
+        else:
+            stale_event = discovery_event.copy()
+            stale_event['timestamp'] = time.time()
+            stale_event['message'] = f'Block #{block.height} from {block.miner_id} is stale/rejected'
+            stale_event['type'] = 'block_stale'
+            stale_event['block']['accepted'] = False
+            _event_queue.put(stale_event)
+
+            # Update miners with current head (in case the head changed due to another block)
+            _broadcast_new_work_to_miners()

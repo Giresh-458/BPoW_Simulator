@@ -5,9 +5,9 @@ Miner implementation for Proof-of-Work simulation.
 import threading
 import time
 import random
-import hashlib
 from typing import Callable, Optional
 from .core import Block
+from utils.hash_utils import compute_block_hash, hash_meets_difficulty
 
 class Miner:
     """Represents a blockchain miner that attempts to find valid blocks."""
@@ -28,6 +28,9 @@ class Miner:
         self.use_real_sha256 = False
         self.difficulty = 4
         self.current_data = "Hello Blockchain!"
+        # Current mining work (set by sim_api)
+        self.prev_hash = "0" * 64
+        self.height = 0
         
     def start(self, on_block_found: Callable, use_real_sha256: bool = False, 
               difficulty: int = 4, data: str = "Hello Blockchain!") -> None:
@@ -60,58 +63,79 @@ class Miner:
             
     def _mining_loop(self) -> None:
         """Main mining loop that runs in a separate thread."""
-        nonce = 0
-        
+        # Use a small cycle time to batch attempts and reduce Python overhead
+        cycle_time = 0.1
+        nonce = random.randint(0, 2**32 - 1)
+
         while self.is_mining:
-            # Simulate mining attempt
-            if self.use_real_sha256:
-                # TODO: Implement real SHA256 mining
-                is_valid = self._check_real_hash(nonce)
-            else:
-                # Fast simulation mode
-                is_valid = self._check_fast_hash(nonce)
-                
-            if is_valid and self.is_mining:
-                # Found a valid block!
-                block = self._create_block(nonce)
-                if self.on_block_found:
-                    self.on_block_found(block)
-                break
-                
-            nonce += 1
-            
-            # Simulate hash rate timing
-            if self.hash_rate > 0:
-                time.sleep(1.0 / self.hash_rate)
+            # Snapshot current work to detect changes during cycle
+            prev_hash = self.prev_hash
+            height = self.height
+            data = self.current_data
+            difficulty = self.difficulty
+
+            # Number of attempts this cycle based on desired hash_rate
+            attempts = max(1, int(self.hash_rate * cycle_time))
+
+            # Use a fixed timestamp for the whole cycle (deterministic header)
+            timestamp = time.time()
+
+            for _ in range(attempts):
+                # Compute canonical hash for this nonce
+                h = compute_block_hash(prev_hash, height + 1, timestamp, data, nonce, self.id)
+                if hash_meets_difficulty(h, difficulty):
+                    # Found a valid block
+                    block = Block(
+                        height=height + 1,
+                        prev_hash=prev_hash,
+                        timestamp=timestamp,
+                        data=data,
+                        nonce=nonce,
+                        miner_id=self.id,
+                        hash=h
+                    )
+                    if self.on_block_found:
+                        self.on_block_found(block)
+                    # After announcing, break to let sim_api update heads/work
+                    # Do not permanently stop the miner thread; sim_api will update work
+                    break
+                nonce = (nonce + 1) & 0xFFFFFFFF
+
+            # Sleep briefly if still mining
+            if self.is_mining:
+                time.sleep(cycle_time)
                 
     def _check_real_hash(self, nonce: int) -> bool:
-        """Check if nonce produces a valid hash using real SHA256."""
-        # TODO: Implement real SHA256 hash checking
-        # This should compute SHA256(data + nonce) and check difficulty
-        return random.random() < 0.001  # Placeholder probability
+        """Legacy helper: compute a single hash and check difficulty."""
+        timestamp = time.time()
+        h = compute_block_hash(self.prev_hash, self.height + 1, timestamp, self.current_data, nonce, self.id)
+        return hash_meets_difficulty(h, self.difficulty)
         
     def _check_fast_hash(self, nonce: int) -> bool:
         """Fast simulation mode - pseudo-random check."""
-        # Simple probability-based simulation
-        # Higher difficulty = lower probability
         probability = 1.0 / (2 ** self.difficulty)
         return random.random() < probability
         
     def _create_block(self, nonce: int) -> Block:
-        """Create a new block with the found nonce."""
-        # TODO: Implement proper block creation with real hash
+        """Create a new block using current work (legacy helper)."""
         timestamp = time.time()
-        block_hash = f"block_{self.id}_{nonce}_{timestamp}"  # Placeholder hash
-        
+        h = compute_block_hash(self.prev_hash, self.height + 1, timestamp, self.current_data, nonce, self.id)
         return Block(
-            height=0,  # TODO: Get from blockchain
-            prev_hash="0" * 64,  # TODO: Get from blockchain
+            height=self.height + 1,
+            prev_hash=self.prev_hash,
             timestamp=timestamp,
             data=self.current_data,
             nonce=nonce,
             miner_id=self.id,
-            hash=block_hash
+            hash=h
         )
+
+    def set_work(self, prev_hash: str, height: int, data: str, difficulty: int) -> None:
+        """Update the miner's current work atomically (called by sim_api)."""
+        self.prev_hash = prev_hash
+        self.height = height
+        self.current_data = data
+        self.difficulty = difficulty
         
     def set_hash_rate(self, rate: float) -> None:
         """Update the miner's hash rate."""
