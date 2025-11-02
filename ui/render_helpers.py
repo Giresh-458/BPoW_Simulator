@@ -32,35 +32,56 @@ def render_block_card(block: Dict[str, Any]) -> str:
     except:
         time_str = 'N/A'
     
-    # Determine card class based on status
-    card_class = "block-card accepted" if accepted else "block-card stale"
+    # Determine card styling based on status
+    if accepted:
+        border_color = "#28a745"
+        bg_gradient = "linear-gradient(145deg, #d4edda, #c3e6cb)"
+        status_emoji = "✅"
+    else:
+        border_color = "#dc3545"
+        bg_gradient = "linear-gradient(145deg, #f8d7da, #f1b0b7)"
+        status_emoji = "❌"
     
     # Shorten hashes for display
-    short_hash = block_hash[:8] + "..." if len(block_hash) > 8 else block_hash
-    short_prev_hash = prev_hash[:8] + "..." if len(prev_hash) > 8 else prev_hash
+    short_hash = block_hash[:10] + "..." if len(block_hash) > 10 else block_hash
+    short_prev_hash = prev_hash[:10] + "..." if len(prev_hash) > 10 else prev_hash
     
     html = f"""
-    <div class="{card_class}" style="border: 1px solid #ddd; border-radius: 8px; padding: 10px; margin: 5px; background-color: #f9f9f9; display: inline-block; min-width: 200px; vertical-align: top;">
-        <div style="font-weight: bold; font-size: 14px; margin-bottom: 8px;">
-            Block #{height}
+    <div style="
+        border: 3px solid {border_color}; 
+        border-radius: 12px; 
+        padding: 14px; 
+        margin: 5px; 
+        background: {bg_gradient}; 
+        display: inline-block; 
+        min-width: 220px;
+        max-width: 220px;
+        vertical-align: top;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.1);
+        color: #000;
+    ">
+        <div style="font-weight: bold; font-size: 15px; margin-bottom: 10px; color: #000; text-align: center; border-bottom: 2px solid {border_color}; padding-bottom: 6px;">
+            🔗 Block #{height}
         </div>
-        <div style="font-size: 11px; margin: 2px 0;">
-            <strong>Hash:</strong> {short_hash}
+        <div style="font-size: 11px; margin: 4px 0; color: #000;">
+            <strong style="color: #000;">Hash:</strong><br>
+            <code style="background: rgba(255,255,255,0.7); padding: 2px 5px; border-radius: 4px; color: #000; font-size: 10px; border: 1px solid #ccc; display: block; margin-top: 2px;">{short_hash}</code>
         </div>
-        <div style="font-size: 11px; margin: 2px 0;">
-            <strong>Prev:</strong> {short_prev_hash}
+        <div style="font-size: 11px; margin: 4px 0; color: #000;">
+            <strong style="color: #000;">Prev:</strong><br>
+            <code style="background: rgba(255,255,255,0.7); padding: 2px 5px; border-radius: 4px; color: #000; font-size: 10px; border: 1px solid #ccc; display: block; margin-top: 2px;">{short_prev_hash}</code>
         </div>
-        <div style="font-size: 11px; margin: 2px 0;">
-            <strong>Nonce:</strong> {nonce}
+        <div style="font-size: 11px; margin: 4px 0; color: #000;">
+            <strong style="color: #000;">Nonce:</strong> <span style="color: #2c3e50; font-weight: 600;">{nonce}</span>
         </div>
-        <div style="font-size: 11px; margin: 2px 0;">
-            <strong>Miner:</strong> {miner_id}
+        <div style="font-size: 11px; margin: 4px 0; color: #000;">
+            <strong style="color: #000;">Miner:</strong> <span style="color: #16537e; font-weight: 600;">{miner_id}</span>
         </div>
-        <div style="font-size: 11px; margin: 2px 0;">
-            <strong>Time:</strong> {time_str}
+        <div style="font-size: 11px; margin: 4px 0; color: #000;">
+            <strong style="color: #000;">Time:</strong> <span style="color: #2c3e50;">{time_str}</span>
         </div>
-        <div style="font-size: 11px; margin: 2px 0;">
-            <strong>Status:</strong> {'✅ Accepted' if accepted else '❌ Stale'}
+        <div style="font-size: 12px; margin-top: 8px; text-align: center; font-weight: bold; padding: 5px; background: rgba(255,255,255,0.5); border-radius: 6px; color: #000;">
+            {status_emoji} {'Accepted' if accepted else 'Stale'}
         </div>
     </div>
     """
@@ -86,9 +107,18 @@ def render_block_chain(blocks: List[Dict[str, Any]]) -> str:
         card_html = render_block_card(block)
         block_cards.append(card_html)
     
-    # Wrap in a flexbox container for horizontal flow
+    # Wrap in a flexbox container for horizontal flow with improved styling
     html = f"""
-    <div style="display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
+    <div style="
+        display: flex; 
+        flex-wrap: wrap; 
+        gap: 12px; 
+        padding: 15px; 
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+        border-radius: 12px; 
+        border: 2px solid #5568d3;
+        box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
+    ">
         {''.join(block_cards)}
     </div>
     """

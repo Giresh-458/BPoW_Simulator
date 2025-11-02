@@ -127,3 +127,6 @@ dmypy.json
 
 # virtual environment
 .bpow/
+
+tests/
+DOCS/
