@@ -32,6 +32,7 @@ def render_block_card(block: Dict[str, Any]) -> str:
     except:
         time_str = 'N/A'
     
+<<<<<<< HEAD
     # Determine card styling based on status
     if accepted:
         border_color = "#28a745"
@@ -82,6 +83,48 @@ def render_block_card(block: Dict[str, Any]) -> str:
         </div>
         <div style="font-size: 12px; margin-top: 8px; text-align: center; font-weight: bold; padding: 5px; background: rgba(255,255,255,0.5); border-radius: 6px; color: #000;">
             {status_emoji} {'Accepted' if accepted else 'Stale'}
+=======
+    # Determine card class and colors based on status
+    if accepted:
+        card_class = "block-card accepted"
+        bg_color = "#d4edda"
+        border_color = "#28a745"
+        text_color = "#155724"
+    else:
+        card_class = "block-card stale"
+        bg_color = "#f8d7da"
+        border_color = "#dc3545"
+        text_color = "#721c24"
+    
+    # Shorten hashes for display (convert to string if integer)
+    block_hash_str = str(block_hash)
+    prev_hash_str = str(prev_hash)
+    short_hash = block_hash_str[:8] + "..." if len(block_hash_str) > 8 else block_hash_str
+    short_prev_hash = prev_hash_str[:8] + "..." if len(prev_hash_str) > 8 else prev_hash_str
+    
+    html = f"""
+    <div class="{card_class}" style="border: 2px solid {border_color}; border-radius: 8px; padding: 10px; margin: 5px; background-color: {bg_color}; display: inline-block; min-width: 200px; vertical-align: top; color: {text_color};">
+        <div style="font-weight: bold; font-size: 14px; margin-bottom: 8px; color: {text_color};">
+            Block #{height}
+        </div>
+        <div style="font-size: 11px; margin: 2px 0; color: {text_color};">
+            <strong>Hash:</strong> {short_hash}
+        </div>
+        <div style="font-size: 11px; margin: 2px 0; color: {text_color};">
+            <strong>Prev:</strong> {short_prev_hash}
+        </div>
+        <div style="font-size: 11px; margin: 2px 0; color: {text_color};">
+            <strong>Nonce:</strong> {nonce}
+        </div>
+        <div style="font-size: 11px; margin: 2px 0; color: {text_color};">
+            <strong>Miner:</strong> {miner_id}
+        </div>
+        <div style="font-size: 11px; margin: 2px 0; color: {text_color};">
+            <strong>Time:</strong> {time_str}
+        </div>
+        <div style="font-size: 11px; margin: 2px 0; color: {text_color};">
+            <strong>Status:</strong> {'✅ Accepted' if accepted else '❌ Stale'}
+>>>>>>> origin
         </div>
     </div>
     """
@@ -90,7 +133,7 @@ def render_block_card(block: Dict[str, Any]) -> str:
 
 def render_block_chain(blocks: List[Dict[str, Any]]) -> str:
     """
-    Render a list of blocks as a horizontal flow of cards.
+    Render a list of blocks as a horizontal flow of cards with scrolling.
     
     Args:
         blocks: List of block dictionaries
@@ -107,6 +150,7 @@ def render_block_chain(blocks: List[Dict[str, Any]]) -> str:
         card_html = render_block_card(block)
         block_cards.append(card_html)
     
+<<<<<<< HEAD
     # Wrap in a flexbox container for horizontal flow with improved styling
     html = f"""
     <div style="
@@ -119,6 +163,11 @@ def render_block_chain(blocks: List[Dict[str, Any]]) -> str:
         border: 2px solid #5568d3;
         box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
     ">
+=======
+    # Wrap in a scrollable flexbox container
+    html = f"""
+    <div style="display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6; max-height: 600px; overflow-y: auto;">
+>>>>>>> origin
         {''.join(block_cards)}
     </div>
     """

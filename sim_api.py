@@ -34,8 +34,13 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
         if _simulation_running:
             return
             
-        # Initialize simulation components
-        _blockchain = Blockchain()
+        # Initialize simulation components (reuse blockchain if it exists)
+        if _blockchain is None:
+            _blockchain = Blockchain()
+            print("\n[BLOCKCHAIN] New blockchain initialized")
+        else:
+            print(f"\n[BLOCKCHAIN] Resuming blockchain at height {len(_blockchain.blocks)}")
+            
         _miners = []
         _network = Network()
         _difficulty_controller = DifficultyController()
@@ -44,6 +49,7 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
         # Configure blockchain
         _blockchain.set_difficulty(config.get('difficulty', 4))
         
+<<<<<<< HEAD
         # Create miners with configured hash rates (computational power)
         num_miners = config.get('num_miners', 3)
         miner_rates = config.get('miner_rates', {})
@@ -52,13 +58,29 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
             miner_id = f"miner_{i+1}"
             # Use configured rate or default progressive rate
             hash_rate = miner_rates.get(miner_id, 1000 * (i + 1))
+=======
+        # Create miners with configured hash rates
+        num_miners = config.get('num_miners', 3)
+        miner_rates = config.get('miner_rates', {})
+        for i in range(num_miners):
+            miner_id = f"miner_{i+1}"
+            hash_rate = miner_rates.get(miner_id, 100)  # Default 100 H/s
+>>>>>>> origin
             miner = Miner(miner_id, hash_rate=hash_rate)
             _miners.append(miner)
+            print(f"Created {miner_id} with hash rate: {hash_rate} H/s")
             
         # Start network
         _network.start()
         
+<<<<<<< HEAD
         # Start miners with blockchain reference
+=======
+        # Set initial work and start miners
+        head = _blockchain.get_latest_block()
+        prev_hash = head.hash if head else 0
+        height = head.height if head else 0
+>>>>>>> origin
         for miner in _miners:
             miner.start(
                 on_block_found=_on_block_found,
@@ -150,8 +172,15 @@ def submit_data(data_str: str) -> None:
         if not _simulation_running:
             return
             
+<<<<<<< HEAD
         # TODO: Implement data submission to mining queue
         # This should update all miners with new data to mine
+=======
+        # Update all miners with new data while preserving their current work
+        head = _blockchain.get_latest_block()
+        prev_hash = head.hash if head else 0
+        height = head.height if head else 0
+>>>>>>> origin
         for miner in _miners:
             miner.current_data = data_str
             
@@ -205,6 +234,22 @@ def get_stats() -> Dict[str, Any]:
             'difficulty': _difficulty_controller.get_current_difficulty() if _difficulty_controller else 0
         }
 
+<<<<<<< HEAD
+=======
+def _broadcast_new_work_to_miners():
+    """Set current head/difficulty as work for all miners."""
+    head = _blockchain.get_latest_block()
+    prev_hash = head.hash if head else 0
+    height = head.height if head else 0
+    current_data = _miners[0].current_data if _miners else 'Hello Blockchain!'
+    current_difficulty = _blockchain.difficulty
+    for miner in _miners:
+        try:
+            miner.set_work(prev_hash, height, current_data, current_difficulty)
+        except Exception:
+            pass
+
+>>>>>>> origin
 def _on_block_found(block) -> None:
     """
     Callback when a miner finds a new block.
@@ -215,6 +260,7 @@ def _on_block_found(block) -> None:
     with _simulation_lock:
         if not _simulation_running:
             return
+<<<<<<< HEAD
             
         # Add block to blockchain
         if _blockchain.add_block(block):
@@ -248,3 +294,85 @@ def _on_block_found(block) -> None:
                     # Update all miners with new difficulty
                     for miner in _miners:
                         miner.difficulty = new_difficulty
+=======
+
+        # Capture previous head to compute block interval
+        prev_head = _blockchain.get_latest_block()
+
+        # Announce that a block was found (discovery)
+        print(f"\n[MINING] [{block.miner_id}] Found block #{block.height} with hash {block.hash} (nonce: {block.nonce})")
+        
+        discovery_event = {
+            'timestamp': time.time(),
+            'message': f'Block discovered (candidate) by {block.miner_id}',
+            'type': 'block_found',
+            'block': {
+                'height': block.height,
+                'hash': block.hash,
+                'prev_hash': block.prev_hash,
+                'miner_id': block.miner_id,
+                'data': block.data,
+                'timestamp': block.timestamp,
+                'nonce': block.nonce,
+                'accepted': False
+            }
+        }
+        _event_queue.put(discovery_event)
+
+        # Try to add block to blockchain (validation happens inside)
+        added = _blockchain.add_block(block)
+
+        if added:
+            print(f"[ACCEPTED] Block #{block.height} ACCEPTED by network (hash: {block.hash}, prev: {block.prev_hash})")
+            accepted_event = discovery_event.copy()
+            accepted_event['timestamp'] = time.time()
+            accepted_event['message'] = f'Block #{block.height} accepted (by {block.miner_id})'
+            accepted_event['type'] = 'block_accepted'
+            accepted_event['block']['accepted'] = True
+            _event_queue.put(accepted_event)
+
+            # If we had a previous head, compute block time
+            if prev_head:
+                block_time = block.timestamp - prev_head.timestamp
+                if _difficulty_controller:
+                    _difficulty_controller.record_block_time(block_time)
+
+                    # Adjust difficulty if controller desires
+                    if _difficulty_controller.should_adjust_difficulty():
+                        new_difficulty = _difficulty_controller.adjust_difficulty(_difficulty_controller.block_times)
+                        _blockchain.set_difficulty(new_difficulty)
+                        # Update miners' difficulty/work
+                        for miner in _miners:
+                            miner.difficulty = new_difficulty
+                        # Broadcast the change
+                        _event_queue.put({
+                            'timestamp': time.time(),
+                            'message': f'Difficulty adjusted to {new_difficulty}',
+                            'type': 'difficulty_update',
+                            'difficulty': new_difficulty
+                        })
+
+            # Broadcast new work (new head) to miners
+            _broadcast_new_work_to_miners()
+
+        else:
+            # STALE BLOCK EXPLANATION:
+            # A block becomes "stale" when it's rejected by validation.
+            # Common reasons:
+            # 1. Built on old chain head (another miner found a block first)
+            # 2. Hash doesn't meet difficulty requirement
+            # 3. Invalid prev_hash (doesn't match current chain tip)
+            # 4. Timestamp issues (too far in future, or not monotonic)
+            # This is normal in PoW - miners sometimes work on outdated chain state.
+            print(f"[REJECTED] Block #{block.height} REJECTED/STALE from {block.miner_id} (hash: {block.hash})")
+            print(f"           Reason: Block doesn't meet validation (likely mining on old chain head)")
+            stale_event = discovery_event.copy()
+            stale_event['timestamp'] = time.time()
+            stale_event['message'] = f'Block #{block.height} from {block.miner_id} is stale/rejected'
+            stale_event['type'] = 'block_stale'
+            stale_event['block']['accepted'] = False
+            _event_queue.put(stale_event)
+
+            # Update miners with current head (in case the head changed due to another block)
+            _broadcast_new_work_to_miners()
+>>>>>>> origin

@@ -5,21 +5,24 @@ Provides common utility functions used across UI components.
 
 from typing import Union
 
-def short_hash(h: str, length: int = 8) -> str:
+def short_hash(h: Union[str, int], length: int = 8) -> str:
     """
-    Truncate a hash string to a shorter representation.
+    Truncate a hash to a shorter representation.
     
     Args:
-        h: Hash string to truncate
+        h: Hash (string or integer) to truncate
         length: Length of the truncated hash (default 8)
     
     Returns:
         Truncated hash string with ellipsis if needed
     """
-    if not h or not isinstance(h, str):
+    if h is None:
         return "N/A"
     
-    if len(h) <= length:
-        return h
+    # Convert to string if it's an integer
+    h_str = str(h)
     
-    return f"{h[:length]}..."
+    if len(h_str) <= length:
+        return h_str
+    
+    return f"{h_str[:length]}..."

@@ -163,6 +163,7 @@ with col1:
     
     with col_start:
         if st.button("▶️ Start Simulation", disabled=st.session_state['sim_running']):
+<<<<<<< HEAD
             # Prepare miner rates from configured values
             miner_rates = {}
             for i in range(num_miners):
@@ -171,13 +172,27 @@ with col1:
                     miner_rates[miner_id] = st.session_state['miner_rates'][miner_id]
                 else:
                     miner_rates[miner_id] = 1000 * (i + 1)  # Default
+=======
+            # Collect miner hash rates from UI
+            miner_rates = {}
+            for i in range(num_miners):
+                rate_key = f"miner_rate_{i}"
+                if rate_key in st.session_state:
+                    miner_rates[f"miner_{i+1}"] = st.session_state[rate_key]
+                else:
+                    miner_rates[f"miner_{i+1}"] = 100  # Default 100 H/s
+>>>>>>> origin
             
             config = {
                 'num_miners': num_miners,
                 'difficulty': difficulty,
                 'use_real_hash': use_real_hash,
                 'data': block_data,
+<<<<<<< HEAD
                 'miner_rates': miner_rates  # Pass configured rates
+=======
+                'miner_rates': miner_rates
+>>>>>>> origin
             }
             
             if SIM_API_AVAILABLE:
@@ -224,9 +239,15 @@ with col1:
             mime="application/json"
         )
     
+<<<<<<< HEAD
     # Miner rates expander - Allow configuration before and during simulation
     with st.expander("⚡ Miner Computational Power (Hash Rates)", expanded=False):
         st.caption("Configure hash rates BEFORE starting simulation. Higher hash rate = more computational power = faster mining")
+=======
+    # Miner rates expander
+    with st.expander("⚡ Miner Rates (Hash/s)", expanded=False):
+        st.caption("⚠️ Hash rates can only be set before starting the simulation")
+>>>>>>> origin
         for i in range(num_miners):
             miner_id = f"miner_{i+1}"
             # Default progressive hash rates: 1000, 2000, 3000, etc.
@@ -237,6 +258,7 @@ with col1:
                 st.session_state['miner_rates'][miner_id] = default_rate
             
             current_rate = st.number_input(
+<<<<<<< HEAD
                 f"Miner {i+1} (H/s)",
                 min_value=100,
                 max_value=10000,
@@ -249,13 +271,26 @@ with col1:
             
             # Save the rate
             st.session_state['miner_rates'][miner_id] = current_rate
+=======
+                f"Miner {i+1} (hashes per second)",
+                min_value=1,
+                max_value=10000,
+                value=100,  # Reduced default for better pacing
+                step=50,
+                key=f"miner_rate_{i}",
+                disabled=st.session_state['sim_running'],
+                help="Number of hash attempts this miner makes per second. Lower = slower mining, more realistic."
+            )
+>>>>>>> origin
 
 with col2:
     st.subheader("📊 Visualization")
     
-    # Block display area
-    st.markdown("**🔗 Blockchain**")
-    block_area = st.empty()
+    # Block display area with scroll
+    st.markdown("**🔗 Blockchain (scrollable)**")
+    block_container = st.container()
+    with block_container:
+        block_area = st.empty()
     
     # Mining log area
     st.markdown("**📝 Mining Log**")
@@ -354,9 +389,13 @@ if st.session_state['sim_running']:
                         blocks.append(event_block)
     
     if blocks:
+<<<<<<< HEAD
         # Sort by height
         blocks_sorted = sorted(blocks, key=lambda b: b.get('height', 0))
         block_html = render_block_chain(blocks_sorted[-10:])  # Show last 10 blocks
+=======
+        block_html = render_block_chain(blocks)  # Show all blocks with scroll
+>>>>>>> origin
         block_area.markdown(block_html, unsafe_allow_html=True)
     else:
         block_area.info("No blocks mined yet...")

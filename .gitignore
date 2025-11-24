@@ -126,7 +126,5 @@ dmypy.json
 .streamlit/
 
 # virtual environment
-.bpow/
-
-tests/
-DOCS/
+bpow/
+checks/

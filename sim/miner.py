@@ -29,6 +29,12 @@ class Miner:
         self.use_real_sha256 = False
         self.difficulty = 4
         self.current_data = "Hello Blockchain!"
+<<<<<<< HEAD
+=======
+        # Current mining work (set by sim_api)
+        self.prev_hash = 0  # Integer hash for mod 10000
+        self.height = 0
+>>>>>>> origin
         
     def start(self, on_block_found: Callable, blockchain: Blockchain,
               use_real_sha256: bool = False, difficulty: int = 4, 
@@ -63,6 +69,7 @@ class Miner:
             self.mining_thread.join(timeout=1.0)
             
     def _mining_loop(self) -> None:
+<<<<<<< HEAD
         """Main mining loop that runs in a separate thread."""
         nonce = 0
         
@@ -70,6 +77,72 @@ class Miner:
             # Get current blockchain state
             if not self.blockchain:
                 break
+=======
+        """
+        Main mining loop that runs in a separate thread.
+        
+        Hash Power Explanation:
+        -----------------------
+        The hash_rate parameter (e.g., 1000) represents the number of hash 
+        computations this miner attempts per second.
+        
+        Example: If hash_rate = 1000:
+        - Every 0.1 seconds (cycle_time), the miner attempts 100 hashes
+        - Each hash attempt tests a different nonce value
+        - If a hash meets the difficulty requirement, a valid block is found
+        
+        With difficulty 4 (threshold 312), each hash has ~3.12% chance of success.
+        So a miner with 1000 H/s will find a valid block approximately every:
+        1000 attempts/sec ÷ (10000/312) = ~31 attempts/sec success rate
+        → About 1 block every 0.03 seconds on average (very fast for testing!)
+        
+        In production PoW:
+        - Bitcoin miners: ~100 TH/s (terahashes per second)
+        - Difficulty adjusts so network finds 1 block every 10 minutes
+        """
+        # Use a small cycle time to batch attempts and reduce Python overhead
+        cycle_time = 0.1
+        nonce = random.randint(0, 2**32 - 1)
+
+        while self.is_mining:
+            # Snapshot current work to detect changes during cycle
+            prev_hash = self.prev_hash
+            height = self.height
+            data = self.current_data
+            difficulty = self.difficulty
+
+            # Number of attempts this cycle based on desired hash_rate
+            # Example: hash_rate=1000, cycle_time=0.1 → attempts=100
+            attempts = max(1, int(self.hash_rate * cycle_time))
+
+            # Use a fixed timestamp for the whole cycle (deterministic header)
+            timestamp = time.time()
+
+            for _ in range(attempts):
+                # Compute canonical hash for this nonce
+                h = compute_block_hash(prev_hash, height + 1, timestamp, data, nonce, self.id)
+                if hash_meets_difficulty(h, difficulty):
+                    # Found a valid block
+                    block = Block(
+                        height=height + 1,
+                        prev_hash=prev_hash,
+                        timestamp=timestamp,
+                        data=data,
+                        nonce=nonce,
+                        miner_id=self.id,
+                        hash=h
+                    )
+                    if self.on_block_found:
+                        self.on_block_found(block)
+                    # After announcing, break to let sim_api update heads/work
+                    # Do not permanently stop the miner thread; sim_api will update work
+                    break
+                nonce = (nonce + 1) & 0xFFFFFFFF
+
+            # Sleep briefly if still mining
+            if self.is_mining:
+                time.sleep(cycle_time)
+>>>>>>> origin
                 
             latest_block = self.blockchain.get_latest_block()
             if not latest_block:
