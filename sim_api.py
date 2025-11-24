@@ -36,8 +36,13 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable = None) -> No
         if _simulation_running:
             return
             
-        # Initialize simulation components
-        _blockchain = Blockchain()
+        # Initialize simulation components (reuse blockchain if it exists)
+        if _blockchain is None:
+            _blockchain = Blockchain()
+            print("\n[BLOCKCHAIN] New blockchain initialized")
+        else:
+            print(f"\n[BLOCKCHAIN] Resuming blockchain at height {len(_blockchain.blocks)}")
+            
         _miners = []
         _network = Network()
         _difficulty_controller = DifficultyController()
@@ -46,18 +51,22 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable = None) -> No
         # Configure blockchain
         _blockchain.set_difficulty(config.get('difficulty', 4))
         
-        # Create miners
+        # Create miners with configured hash rates
         num_miners = config.get('num_miners', 3)
+        miner_rates = config.get('miner_rates', {})
         for i in range(num_miners):
-            miner = Miner(f"miner_{i+1}", hash_rate=1.0)
+            miner_id = f"miner_{i+1}"
+            hash_rate = miner_rates.get(miner_id, 100)  # Default 100 H/s
+            miner = Miner(miner_id, hash_rate=hash_rate)
             _miners.append(miner)
+            print(f"Created {miner_id} with hash rate: {hash_rate} H/s")
             
         # Start network
         _network.start()
         
         # Set initial work and start miners
         head = _blockchain.get_latest_block()
-        prev_hash = head.hash if head else "0"*64
+        prev_hash = head.hash if head else 0
         height = head.height if head else 0
         for miner in _miners:
             miner.set_work(prev_hash, height, config.get('data','Hello Blockchain!'), _blockchain.difficulty)
@@ -132,7 +141,7 @@ def submit_data(data_str: str) -> None:
             
         # Update all miners with new data while preserving their current work
         head = _blockchain.get_latest_block()
-        prev_hash = head.hash if head else "0" * 64
+        prev_hash = head.hash if head else 0
         height = head.height if head else 0
         for miner in _miners:
             miner.set_work(prev_hash, height, data_str, _blockchain.difficulty)
@@ -205,7 +214,7 @@ def get_stats() -> Dict[str, Any]:
 def _broadcast_new_work_to_miners():
     """Set current head/difficulty as work for all miners."""
     head = _blockchain.get_latest_block()
-    prev_hash = head.hash if head else "0" * 64
+    prev_hash = head.hash if head else 0
     height = head.height if head else 0
     current_data = _miners[0].current_data if _miners else 'Hello Blockchain!'
     current_difficulty = _blockchain.difficulty
@@ -230,6 +239,8 @@ def _on_block_found(block) -> None:
         prev_head = _blockchain.get_latest_block()
 
         # Announce that a block was found (discovery)
+        print(f"\n[MINING] [{block.miner_id}] Found block #{block.height} with hash {block.hash} (nonce: {block.nonce})")
+        
         discovery_event = {
             'timestamp': time.time(),
             'message': f'Block discovered (candidate) by {block.miner_id}',
@@ -251,6 +262,7 @@ def _on_block_found(block) -> None:
         added = _blockchain.add_block(block)
 
         if added:
+            print(f"[ACCEPTED] Block #{block.height} ACCEPTED by network (hash: {block.hash}, prev: {block.prev_hash})")
             accepted_event = discovery_event.copy()
             accepted_event['timestamp'] = time.time()
             accepted_event['message'] = f'Block #{block.height} accepted (by {block.miner_id})'
@@ -283,6 +295,16 @@ def _on_block_found(block) -> None:
             _broadcast_new_work_to_miners()
 
         else:
+            # STALE BLOCK EXPLANATION:
+            # A block becomes "stale" when it's rejected by validation.
+            # Common reasons:
+            # 1. Built on old chain head (another miner found a block first)
+            # 2. Hash doesn't meet difficulty requirement
+            # 3. Invalid prev_hash (doesn't match current chain tip)
+            # 4. Timestamp issues (too far in future, or not monotonic)
+            # This is normal in PoW - miners sometimes work on outdated chain state.
+            print(f"[REJECTED] Block #{block.height} REJECTED/STALE from {block.miner_id} (hash: {block.hash})")
+            print(f"           Reason: Block doesn't meet validation (likely mining on old chain head)")
             stale_event = discovery_event.copy()
             stale_event['timestamp'] = time.time()
             stale_event['message'] = f'Block #{block.height} from {block.miner_id} is stale/rejected'

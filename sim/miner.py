@@ -29,7 +29,7 @@ class Miner:
         self.difficulty = 4
         self.current_data = "Hello Blockchain!"
         # Current mining work (set by sim_api)
-        self.prev_hash = "0" * 64
+        self.prev_hash = 0  # Integer hash for mod 10000
         self.height = 0
         
     def start(self, on_block_found: Callable, use_real_sha256: bool = False, 
@@ -62,7 +62,28 @@ class Miner:
             self.mining_thread.join(timeout=1.0)
             
     def _mining_loop(self) -> None:
-        """Main mining loop that runs in a separate thread."""
+        """
+        Main mining loop that runs in a separate thread.
+        
+        Hash Power Explanation:
+        -----------------------
+        The hash_rate parameter (e.g., 1000) represents the number of hash 
+        computations this miner attempts per second.
+        
+        Example: If hash_rate = 1000:
+        - Every 0.1 seconds (cycle_time), the miner attempts 100 hashes
+        - Each hash attempt tests a different nonce value
+        - If a hash meets the difficulty requirement, a valid block is found
+        
+        With difficulty 4 (threshold 312), each hash has ~3.12% chance of success.
+        So a miner with 1000 H/s will find a valid block approximately every:
+        1000 attempts/sec ÷ (10000/312) = ~31 attempts/sec success rate
+        → About 1 block every 0.03 seconds on average (very fast for testing!)
+        
+        In production PoW:
+        - Bitcoin miners: ~100 TH/s (terahashes per second)
+        - Difficulty adjusts so network finds 1 block every 10 minutes
+        """
         # Use a small cycle time to batch attempts and reduce Python overhead
         cycle_time = 0.1
         nonce = random.randint(0, 2**32 - 1)
@@ -75,6 +96,7 @@ class Miner:
             difficulty = self.difficulty
 
             # Number of attempts this cycle based on desired hash_rate
+            # Example: hash_rate=1000, cycle_time=0.1 → attempts=100
             attempts = max(1, int(self.hash_rate * cycle_time))
 
             # Use a fixed timestamp for the whole cycle (deterministic header)
