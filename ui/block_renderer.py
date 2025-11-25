@@ -23,8 +23,11 @@ def render_blocks(blocks: List[Dict[str, Any]]) -> str:
     
     html_parts = [
         """
-        <div style="display: flex; overflow-x: auto; gap: 10px; padding: 10px; 
-                    background-color: #f8f9fa; border-radius: 8px; margin: 10px 0;">
+        <div style="display: flex; overflow-x: auto; gap: 12px; padding: 15px; 
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    border-radius: 12px; 
+                    margin: 10px 0;
+                    box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);">
         """
     ]
     
@@ -52,16 +55,17 @@ def render_blocks(blocks: List[Dict[str, Any]]) -> str:
         else:
             time_str = str(timestamp)
         
-        # Create block card HTML
+        # Create block card HTML with improved styling
         block_html = f"""
         <div style="
-            min-width: 200px; 
-            padding: 12px; 
-            border: 2px solid {border_color}; 
-            border-radius: 8px; 
-            background-color: {bg_color};
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            font-family: 'Courier New', monospace;
+            min-width: 220px;
+            max-width: 220px;
+            padding: 16px; 
+            border: 3px solid {border_color}; 
+            border-radius: 12px; 
+            background: linear-gradient(145deg, {bg_color}, {'#c3e6cb' if block.get('accepted', True) else '#f1b0b7'});
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.1);
+            font-family: 'Segoe UI', 'Courier New', monospace;
             font-size: 12px;
             color: {text_color};
         ">

@@ -1,4 +1,4 @@
-"""
+﻿"""
 UI rendering helper functions for blockchain visualization.
 Provides HTML rendering functions for blocks, blockchain, and mining logs.
 """
@@ -32,7 +32,7 @@ def render_block_card(block: Dict[str, Any]) -> str:
     except:
         time_str = 'N/A'
     
-    # Determine card class and colors based on status
+# Determine card class and colors based on status
     if accepted:
         card_class = "block-card accepted"
         bg_color = "#d4edda"
@@ -71,8 +71,8 @@ def render_block_card(block: Dict[str, Any]) -> str:
             <strong>Time:</strong> {time_str}
         </div>
         <div style="font-size: 11px; margin: 2px 0; color: {text_color};">
-            <strong>Status:</strong> {'✅ Accepted' if accepted else '❌ Stale'}
-        </div>
+            <strong>Status:</strong> {'âœ… Accepted' if accepted else 'âŒ Stale'}
+</div>
     </div>
     """
     
@@ -97,10 +97,10 @@ def render_block_chain(blocks: List[Dict[str, Any]]) -> str:
         card_html = render_block_card(block)
         block_cards.append(card_html)
     
-    # Wrap in a scrollable flexbox container
+# Wrap in a scrollable flexbox container
     html = f"""
     <div style="display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6; max-height: 600px; overflow-y: auto;">
-        {''.join(block_cards)}
+{''.join(block_cards)}
     </div>
     """
     

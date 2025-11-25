@@ -40,9 +40,11 @@ class DifficultyController:
         # If blocks are significantly faster than target -> increase difficulty by 1.
         if avg_block_time < self.target_block_time * 0.9:
             self.current_difficulty = min(self.current_difficulty + 1, 32)
+            print("Increasing difficulty to", self.current_difficulty)
         # If blocks are significantly slower than target -> decrease difficulty by 1.
         elif avg_block_time > self.target_block_time * 1.1:
             self.current_difficulty = max(self.current_difficulty - 1, 1)
+            print("Decreasing difficulty to", self.current_difficulty)
 
         # Reset recorded times after adjustment and update last adjustment timestamp
         self.block_times = []

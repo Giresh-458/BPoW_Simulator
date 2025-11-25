@@ -5,7 +5,6 @@ Provides thread-safe interface for simulation control.
 
 import threading
 import time
-import queue
 from typing import Dict, Any, Callable, List
 from sim.core import Blockchain
 from sim.miner import Miner
@@ -20,9 +19,9 @@ _miners: List[Miner] = []
 _network: Network = None
 _difficulty_controller: DifficultyController = None
 _ui_callback: Callable = None
-_event_queue: queue.Queue = queue.Queue()
+_event_queue = None
 
-def start_simulation(config: Dict[str, Any], ui_callback: Callable = None) -> None:
+def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
     """
     Start the blockchain simulation with given configuration.
     
@@ -30,11 +29,15 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable = None) -> No
         config: Simulation configuration dictionary
         ui_callback: Function to call for UI updates
     """
-    global _simulation_running, _blockchain, _miners, _network, _difficulty_controller, _ui_callback
+    global _simulation_running, _blockchain, _miners, _network, _difficulty_controller, _ui_callback, _event_queue
     
     with _simulation_lock:
         if _simulation_running:
             return
+        
+        # Initialize event queue for UI updates
+        import queue
+        _event_queue = queue.Queue()
             
         # Initialize simulation components (reuse blockchain if it exists)
         if _blockchain is None:
@@ -56,7 +59,7 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable = None) -> No
         miner_rates = config.get('miner_rates', {})
         for i in range(num_miners):
             miner_id = f"miner_{i+1}"
-            hash_rate = miner_rates.get(miner_id, 100)  # Default 100 H/s
+            hash_rate = miner_rates.get(miner_id, 500)  # Default 500 H/s for 1 crore hash space
             miner = Miner(miner_id, hash_rate=hash_rate)
             _miners.append(miner)
             print(f"Created {miner_id} with hash rate: {hash_rate} H/s")
@@ -69,22 +72,41 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable = None) -> No
         prev_hash = head.hash if head else 0
         height = head.height if head else 0
         for miner in _miners:
-            miner.set_work(prev_hash, height, config.get('data','Hello Blockchain!'), _blockchain.difficulty)
             miner.start(
                 on_block_found=_on_block_found,
+                blockchain=_blockchain,
                 use_real_sha256=config.get('use_real_sha256', False),
-                difficulty=_blockchain.difficulty,
+                difficulty=config.get('difficulty', 4),
                 data=config.get('data', 'Hello Blockchain!')
             )
             
         _simulation_running = True
         
-        # Add start event to queue
-        _event_queue.put({
-            'timestamp': time.time(),
-            'message': f'Started simulation with {num_miners} miners',
-            'type': 'simulation_start'
-        })
+        # Notify UI with genesis block
+        if _ui_callback:
+            _ui_callback({
+                'timestamp': time.time(),
+                'message': f'Started simulation with {num_miners} miners',
+                'type': 'simulation_start'
+            })
+            
+            # Send genesis block to UI
+            genesis_block = _blockchain.blocks[0] if _blockchain.blocks else None
+            if genesis_block:
+                _ui_callback({
+                    'timestamp': time.time(),
+                    'message': f'Genesis block created (height 0)',
+                    'type': 'block_found',
+                    'block': {
+                        'height': genesis_block.height,
+                        'hash': genesis_block.hash,
+                        'prev_hash': genesis_block.prev_hash,
+                        'nonce': genesis_block.nonce,
+                        'miner_id': genesis_block.miner_id,
+                        'timestamp': genesis_block.timestamp,
+                        'accepted': genesis_block.accepted
+                    }
+                })
 
 def stop_simulation() -> None:
     """Stop the running simulation."""
@@ -104,12 +126,13 @@ def stop_simulation() -> None:
             
         _simulation_running = False
         
-        # Add stop event to queue
-        _event_queue.put({
-            'timestamp': time.time(),
-            'message': 'Simulation stopped',
-            'type': 'simulation_stop'
-        })
+        # Notify UI
+        if _ui_callback:
+            _ui_callback({
+                'timestamp': time.time(),
+                'message': 'Simulation stopped',
+                'type': 'simulation_stop'
+            })
 
 def set_miner_rate(miner_id: str, rate: float) -> None:
     """
@@ -144,31 +167,14 @@ def submit_data(data_str: str) -> None:
         prev_hash = head.hash if head else 0
         height = head.height if head else 0
         for miner in _miners:
-            miner.set_work(prev_hash, height, data_str, _blockchain.difficulty)
+            miner.current_data = data_str
             
-        # Add data submission event to queue
-        _event_queue.put({
-            'timestamp': time.time(),
-            'message': f'Submitted data: {data_str}',
-            'type': 'data_submission'
-        })
-
-def get_pending_events() -> List[Dict[str, Any]]:
-    """
-    Get all pending events from the event queue.
-    This should be called from the main thread (Streamlit).
-    
-    Returns:
-        List of pending events
-    """
-    events = []
-    try:
-        while True:
-            event = _event_queue.get_nowait()
-            events.append(event)
-    except queue.Empty:
-        pass
-    return events
+        if _ui_callback:
+            _ui_callback({
+                'timestamp': time.time(),
+                'message': f'Submitted data: {data_str}',
+                'type': 'data_submission'
+            })
 
 def get_stats() -> Dict[str, Any]:
     """
@@ -187,16 +193,18 @@ def get_stats() -> Dict[str, Any]:
                 'difficulty': 0
             }
             
-        # Collect block data
+        # Collect block data with accepted status
         blocks = []
         for block in _blockchain.blocks:
             blocks.append({
                 'height': block.height,
                 'hash': block.hash,
+                'prev_hash': block.prev_hash,
                 'miner_id': block.miner_id,
                 'data': block.data,
                 'timestamp': block.timestamp,
-                'nonce': block.nonce
+                'nonce': block.nonce,
+                'accepted': block.accepted  # Include accepted status
             })
             
         # Calculate mining stats

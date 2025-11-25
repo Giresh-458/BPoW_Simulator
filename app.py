@@ -4,34 +4,21 @@ Provides UI controls and displays simulation results.
 """
 
 import streamlit as st
-
-# Must be the first Streamlit command
-st.set_page_config(
-    page_title="PoW Blockchain Simulator",
-    page_icon="⛏️",
-    layout="wide"
-)
-
 import threading
 import time
 import json
+import queue
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-import sys
-from pathlib import Path
 
-# Add project root to Python path to enable imports
-project_root = Path(__file__).parent
-if str(project_root) not in sys.path:
-    sys.path.append(str(project_root))
-
-# Import simulation API (with proper path handling)
+# Import simulation API
 try:
     from sim_api import start_simulation, stop_simulation, set_miner_rate, submit_data, get_stats
     SIM_API_AVAILABLE = True
-except ImportError as e:
+except ImportError:
     SIM_API_AVAILABLE = False
-    st.warning(f"⚠️ sim_api not available yet — UI loaded in mock mode. Error: {e}")
+    st.warning("⚠️ sim_api not available yet — UI loaded in mock mode")
+    print("sim_api not available yet — UI loaded in mock mode")
 
 # Import UI helpers
 try:
@@ -50,57 +37,39 @@ if 'events' not in st.session_state:
     st.session_state['events'] = []
 if 'sim_running' not in st.session_state:
     st.session_state['sim_running'] = False
+if 'event_queue' not in st.session_state:
+    st.session_state['event_queue'] = queue.Queue()
+if 'miner_rates' not in st.session_state:
+    st.session_state['miner_rates'] = {}
 
-def process_simulation_events() -> None:
+def ui_callback(event: Dict[str, Any]) -> None:
     """
-    Process pending simulation events from the event queue.
-    This should be called from the main Streamlit thread.
+    Thread-safe callback function to handle simulation events.
+    Called from mining threads - uses queue instead of direct session_state access.
     """
-    if SIM_API_AVAILABLE:
-        try:
-            from sim_api import get_pending_events
-            events = get_pending_events()
-            for event in events:
-                st.session_state['events'].append(event)
-                
-                # Keep only recent events to prevent memory issues
-                if len(st.session_state['events']) > 1000:
-                    st.session_state['events'] = st.session_state['events'][-500:]
-        except ImportError:
-            pass
+    # Use queue for thread-safe communication
+    if 'event_queue' in st.session_state:
+        st.session_state['event_queue'].put(event)
 
-# Mock mode for testing UI without sim_api
-if not SIM_API_AVAILABLE:
-    # TODO: Remove this mock code when sim_api is available
-    def mock_ui_callback():
-        """Generate fake events for UI testing."""
-        fake_events = [
-            {
-                "type": "block_found",
-                "block": {
-                    "height": len(st.session_state['events']) + 1,
-                    "hash": f"0000abcd{hash(str(time.time()))[:8]}",
-                    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-                    "nonce": int(time.time()) % 100000,
-                    "miner_id": f"miner_{(len(st.session_state['events']) % 3) + 1}",
-                    "timestamp": time.time(),
-                    "accepted": True
-                },
-                "timestamp": time.time()
-            }
-        ]
-        for event in fake_events:
-            ui_callback(event)
-    
-    # Auto-generate mock events every 2 seconds
-    if st.session_state['sim_running'] and len(st.session_state['events']) < 10:
-        if 'last_mock_time' not in st.session_state:
-            st.session_state['last_mock_time'] = time.time()
-        elif time.time() - st.session_state['last_mock_time'] > 2:
-            mock_ui_callback()
-            st.session_state['last_mock_time'] = time.time()
+def process_event_queue():
+    """Process events from the queue into session state."""
+    try:
+        while not st.session_state['event_queue'].empty():
+            event = st.session_state['event_queue'].get_nowait()
+            st.session_state['events'].append(event)
+            
+            # Keep only recent events to prevent memory issues
+            if len(st.session_state['events']) > 1000:
+                st.session_state['events'] = st.session_state['events'][-500:]
+    except queue.Empty:
+        pass
 
-
+# Page configuration
+st.set_page_config(
+    page_title="PoW Blockchain Simulator",
+    page_icon="⛏️",
+    layout="wide"
+)
 
 # Main title
 st.title("⛏️ Proof-of-Work Blockchain Simulator")
@@ -171,7 +140,7 @@ with col1:
                 if rate_key in st.session_state:
                     miner_rates[f"miner_{i+1}"] = st.session_state[rate_key]
                 else:
-                    miner_rates[f"miner_{i+1}"] = 100  # Default 100 H/s
+                    miner_rates[f"miner_{i+1}"] = 500  # Default 500 H/s
             
             config = {
                 'num_miners': num_miners,
@@ -182,7 +151,7 @@ with col1:
             }
             
             if SIM_API_AVAILABLE:
-                start_simulation(config, None)  # No longer need callback
+                start_simulation(config, ui_callback)
             else:
                 st.info("Mock mode: Simulation started")
             
@@ -230,15 +199,22 @@ with col1:
         st.caption("⚠️ Hash rates can only be set before starting the simulation")
         for i in range(num_miners):
             miner_id = f"miner_{i+1}"
+            # Default progressive hash rates: 1000, 2000, 3000, etc.
+            default_rate = 1000 * (i + 1)
+            
+            # Get saved rate or use default
+            if miner_id not in st.session_state['miner_rates']:
+                st.session_state['miner_rates'][miner_id] = default_rate
+            
             current_rate = st.number_input(
                 f"Miner {i+1} (hashes per second)",
                 min_value=1,
-                max_value=10000,
-                value=100,  # Reduced default for better pacing
-                step=50,
+                max_value=100000,
+                value=500,  # Default 500 H/s for 1 crore hash space
+                step=100,
                 key=f"miner_rate_{i}",
                 disabled=st.session_state['sim_running'],
-                help="Number of hash attempts this miner makes per second. Lower = slower mining, more realistic."
+                help="Number of hash attempts per second. Higher values = faster mining. Recommended: 100-1000 for realistic pacing with 1 crore hash space."
             )
 
 with col2:
@@ -321,13 +297,30 @@ with col2:
     else:
         st.info("No active miners")
 
+# Process events from queue (thread-safe)
+process_event_queue()
+
 # Update displays
 if st.session_state['sim_running']:
-    # Update block area
+    # Update block area - get blocks from stats (authoritative source)
     blocks = []
-    for event in st.session_state['events']:
-        if event.get('type') == 'block_found' and 'block' in event:
-            blocks.append(event['block'])
+    
+    if SIM_API_AVAILABLE:
+        try:
+            stats = get_stats()
+            if stats and 'blocks' in stats:
+                # Use blocks from blockchain (these have correct accepted status)
+                blocks = stats['blocks']
+        except Exception as e:
+            # Fallback to events if stats fails
+            for event in st.session_state['events']:
+                if event.get('type') == 'block_found' and 'block' in event:
+                    event_block = event['block']
+                    # Ensure accepted field exists (default to True for found blocks)
+                    if 'accepted' not in event_block:
+                        event_block['accepted'] = True
+                    if not any(b.get('height') == event_block.get('height') for b in blocks):
+                        blocks.append(event_block)
     
     if blocks:
         block_html = render_block_chain(blocks)  # Show all blocks with scroll
@@ -335,19 +328,41 @@ if st.session_state['sim_running']:
     else:
         block_area.info("No blocks mined yet...")
     
-    # Process simulation events
-    process_simulation_events()
-    
-    # Update mining log
-    log_html = render_mining_log(st.session_state['events'], max_lines=200)
-    mining_log.markdown(log_html, unsafe_allow_html=True)
+    # Update mining log with events
+    if st.session_state['events']:
+        log_html = render_mining_log(st.session_state['events'], max_lines=200)
+        mining_log.markdown(log_html, unsafe_allow_html=True)
+    else:
+        mining_log.info("No mining activity yet...")
     
     # Auto-refresh every 2 seconds
     time.sleep(2)
     st.rerun()
 else:
-    block_area.info("Simulation stopped")
-    mining_log.info("No mining activity")
+    # Not running - show last state
+    if st.session_state['events']:
+        # Show blocks from last run
+        blocks = []
+        for event in st.session_state['events']:
+            if event.get('type') == 'block_found' and 'block' in event:
+                event_block = event['block']
+                if 'accepted' not in event_block:
+                    event_block['accepted'] = True
+                if not any(b.get('height') == event_block.get('height') for b in blocks):
+                    blocks.append(event_block)
+        
+        if blocks:
+            blocks_sorted = sorted(blocks, key=lambda b: b.get('height', 0))
+            block_html = render_block_chain(blocks_sorted[-10:])
+            block_area.markdown(block_html, unsafe_allow_html=True)
+        else:
+            block_area.info("No blocks mined yet...")
+        
+        log_html = render_mining_log(st.session_state['events'], max_lines=200)
+        mining_log.markdown(log_html, unsafe_allow_html=True)
+    else:
+        block_area.info("Simulation stopped - No data")
+        mining_log.info("No mining activity")
 
 # Add CSS styling
 st.markdown("""

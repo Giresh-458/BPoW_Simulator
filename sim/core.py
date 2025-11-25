@@ -5,6 +5,7 @@ Core blockchain data structures and validation logic.
 from dataclasses import dataclass
 from typing import Optional
 import time
+import threading
 from utils.hash_utils import compute_block_hash, hash_meets_difficulty
 
 @dataclass
@@ -36,9 +37,43 @@ class Blockchain:
     """Manages the blockchain state and validation."""
     
     def __init__(self):
-        """Initialize empty blockchain."""
+        """Initialize blockchain with genesis block."""
         self.blocks: list[Block] = []
         self.difficulty = 4  # Default difficulty
+        self._lock = threading.Lock()  # Thread safety for concurrent mining
+        
+        # Create genesis block
+        self._create_genesis_block()
+        
+    def _create_genesis_block(self) -> None:
+        """Create the genesis block (first block in the chain)."""
+        from utils.hash_utils import compute_block_hash
+        
+        genesis_timestamp = time.time()
+        genesis_prev_hash = "0" * 64  # Genesis block has no previous hash
+        genesis_data = "Genesis Block"
+        genesis_nonce = 0
+        genesis_miner_id = "genesis"
+        genesis_height = 0
+        
+        # Compute genesis hash
+        genesis_hash = compute_block_hash(
+            genesis_prev_hash, genesis_height, genesis_timestamp,
+            genesis_data, genesis_nonce, genesis_miner_id
+        )
+        
+        genesis_block = Block(
+            height=0,
+            prev_hash=genesis_prev_hash,
+            timestamp=genesis_timestamp,
+            data=genesis_data,
+            nonce=genesis_nonce,
+            miner_id=genesis_miner_id,
+            hash=genesis_hash,
+            accepted=True
+        )
+        
+        self.blocks.append(genesis_block)
         
     def add_block(self, block: Block) -> bool:
         """
@@ -50,12 +85,13 @@ class Blockchain:
         Returns:
             True if block was added successfully, False otherwise
         """
-        # TODO: Implement block validation and addition logic
-        if self.validate_block(block):
-            self.blocks.append(block)
-            block.accepted = True
-            return True
-        return False
+        with self._lock:
+            # Validate block before adding
+            if self.validate_block(block):
+                self.blocks.append(block)
+                block.accepted = True
+                return True
+            return False
     
     def validate_block(self, block: Block) -> bool:
         """
@@ -120,11 +156,13 @@ class Blockchain:
     
     def get_latest_block(self) -> Optional[Block]:
         """Get the most recent block in the blockchain."""
-        return self.blocks[-1] if self.blocks else None
+        with self._lock:
+            return self.blocks[-1] if self.blocks else None
     
     def get_block_count(self) -> int:
         """Get the total number of blocks in the blockchain."""
-        return len(self.blocks)
+        with self._lock:
+            return len(self.blocks)
     
     def set_difficulty(self, difficulty: int) -> None:
         """Set the mining difficulty for new blocks."""
