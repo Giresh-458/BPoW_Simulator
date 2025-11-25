@@ -8,6 +8,7 @@ import random
 import hashlib
 from typing import Callable, Optional
 from .core import Block, Blockchain
+from utils.hash_utils import compute_block_hash, hash_meets_difficulty
 
 class Miner:
     """Represents a blockchain miner that attempts to find valid blocks."""
@@ -29,16 +30,13 @@ class Miner:
         self.use_real_sha256 = False
         self.difficulty = 4
         self.current_data = "Hello Blockchain!"
-<<<<<<< HEAD
-=======
         # Current mining work (set by sim_api)
         self.prev_hash = 0  # Integer hash for mod 10000
         self.height = 0
->>>>>>> origin
         
     def start(self, on_block_found: Callable, blockchain: Blockchain,
               use_real_sha256: bool = False, difficulty: int = 4, 
-              data: str = "Hello Blockchain!") -> None:
+              data: str = "Test transaction") -> None:
         """
         Start mining process in a separate thread.
         
@@ -69,32 +67,26 @@ class Miner:
             self.mining_thread.join(timeout=1.0)
             
     def _mining_loop(self) -> None:
-<<<<<<< HEAD
-        """Main mining loop that runs in a separate thread."""
-        nonce = 0
-        
-        while self.is_mining:
-            # Get current blockchain state
-            if not self.blockchain:
-                break
-=======
         """
         Main mining loop that runs in a separate thread.
         
-        Hash Power Explanation:
-        -----------------------
-        The hash_rate parameter (e.g., 1000) represents the number of hash 
+        Hash Power Explanation (for 1 Crore = 10,000,000 hash space):
+        ---------------------------------------------------------------
+        The hash_rate parameter (e.g., 500) represents the number of hash 
         computations this miner attempts per second.
         
-        Example: If hash_rate = 1000:
-        - Every 0.1 seconds (cycle_time), the miner attempts 100 hashes
+        Example: If hash_rate = 500:
+        - Every 0.1 seconds (cycle_time), the miner attempts 50 hashes
         - Each hash attempt tests a different nonce value
         - If a hash meets the difficulty requirement, a valid block is found
         
-        With difficulty 4 (threshold 312), each hash has ~3.12% chance of success.
-        So a miner with 1000 H/s will find a valid block approximately every:
-        1000 attempts/sec ÷ (10000/312) = ~31 attempts/sec success rate
-        → About 1 block every 0.03 seconds on average (very fast for testing!)
+        With difficulty 4 (threshold 312,500), each hash has ~3.125% chance of success.
+        So a miner with 500 H/s will find a valid block approximately every:
+        500 attempts/sec × 3.125% = ~15.6 successful hashes/sec
+        → About 1 block every 0.064 seconds on average (good for testing!)
+        
+        With 1 crore hash space, mining is 1000x harder than with 10000 space,
+        so we use higher hash rates (100-1000 H/s) for reasonable pacing.
         
         In production PoW:
         - Bitcoin miners: ~100 TH/s (terahashes per second)
@@ -142,7 +134,6 @@ class Miner:
             # Sleep briefly if still mining
             if self.is_mining:
                 time.sleep(cycle_time)
->>>>>>> origin
                 
             latest_block = self.blockchain.get_latest_block()
             if not latest_block:
@@ -176,44 +167,42 @@ class Miner:
                 time.sleep(delay)
                 
     def _check_real_hash(self, nonce: int, prev_block: Block) -> tuple[bool, str]:
-        """Check if nonce produces a valid hash using real SHA256."""
-        from utils.hash_utils import compute_block_hash, check_hash_difficulty
-        
+        """Check if nonce produces a valid hash using real hash computation."""
         timestamp = time.time()
         
         # Compute the actual hash
         block_hash = compute_block_hash(
             prev_block.hash,
+            prev_block.height + 1,
+            timestamp,
             self.current_data,
             nonce,
-            timestamp,
             self.id
         )
         
         # Check if it meets difficulty requirement
-        is_valid = check_hash_difficulty(block_hash, self.difficulty)
+        is_valid = hash_meets_difficulty(block_hash, self.difficulty)
         
         return is_valid, block_hash
         
     def _check_fast_hash(self, nonce: int, prev_block: Block) -> tuple[bool, str]:
         """Fast simulation mode - pseudo-random check with proper hash computation."""
-        from utils.hash_utils import compute_block_hash, check_hash_difficulty
-        
         timestamp = time.time()
         
         # Compute actual hash even in fast mode
         block_hash = compute_block_hash(
             prev_block.hash,
+            prev_block.height + 1,
+            timestamp,
             self.current_data,
             nonce,
-            timestamp,
             self.id
         )
         
         # In fast mode, use probability to simulate finding the right nonce faster
         # but still check actual hash occasionally for realism
         if random.random() < 0.1:  # 10% chance to check real hash
-            is_valid = check_hash_difficulty(block_hash, self.difficulty)
+            is_valid = hash_meets_difficulty(block_hash, self.difficulty)
         else:
             # Use probability-based check for speed
             probability = 1.0 / (2 ** self.difficulty)
@@ -228,12 +217,13 @@ class Miner:
                     test_nonce = nonce + offset
                     test_hash = compute_block_hash(
                         prev_block.hash,
+                        prev_block.height + 1,
+                        timestamp,
                         self.current_data,
                         test_nonce,
-                        timestamp,
                         self.id
                     )
-                    if check_hash_difficulty(test_hash, self.difficulty):
+                    if hash_meets_difficulty(test_hash, self.difficulty):
                         return True, test_hash
                 # If we can't find one quickly, mark as invalid
                 is_valid = False

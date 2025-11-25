@@ -5,12 +5,8 @@ Core blockchain data structures and validation logic.
 from dataclasses import dataclass
 from typing import Optional
 import time
-<<<<<<< HEAD
-import hashlib
 import threading
-=======
 from utils.hash_utils import compute_block_hash, hash_meets_difficulty
->>>>>>> origin
 
 @dataclass
 class Block:
@@ -25,15 +21,6 @@ class Block:
     accepted: bool = False
     
     def __post_init__(self):
-<<<<<<< HEAD
-        """Validate block data after initialization."""
-        if not self.hash:
-            # Compute hash if not provided
-            from utils.hash_utils import compute_block_hash
-            self.hash = compute_block_hash(
-                self.prev_hash, self.data, self.nonce, 
-                self.timestamp, self.miner_id
-=======
         """Validate block data and compute hash if not provided."""
         if self.hash is None:
             # Compute hash using all block components
@@ -44,7 +31,6 @@ class Block:
                 self.data, 
                 self.nonce, 
                 self.miner_id
->>>>>>> origin
             )
 
 class Blockchain:
@@ -68,11 +54,12 @@ class Blockchain:
         genesis_data = "Genesis Block"
         genesis_nonce = 0
         genesis_miner_id = "genesis"
+        genesis_height = 0
         
         # Compute genesis hash
         genesis_hash = compute_block_hash(
-            genesis_prev_hash, genesis_data, genesis_nonce,
-            genesis_timestamp, genesis_miner_id
+            genesis_prev_hash, genesis_height, genesis_timestamp,
+            genesis_data, genesis_nonce, genesis_miner_id
         )
         
         genesis_block = Block(
@@ -122,51 +109,6 @@ class Blockchain:
         Returns:
             True if block is valid, False otherwise
         """
-<<<<<<< HEAD
-        from utils.hash_utils import compute_block_hash, check_hash_difficulty
-        
-        # Check if hash exists
-        if not block.hash:
-            return False
-        
-        # Verify hash matches block content
-        computed_hash = compute_block_hash(
-            block.prev_hash, block.data, block.nonce,
-            block.timestamp, block.miner_id
-        )
-        if computed_hash != block.hash:
-            return False
-        
-        # Check if hash meets difficulty requirement (PoW validation)
-        if not check_hash_difficulty(block.hash, self.difficulty):
-            return False
-        
-        # Validate timestamp sanity (not in future, not too old)
-        current_time = time.time()
-        if block.timestamp > current_time + 60:  # Max 1 minute in future
-            return False
-        if block.timestamp < current_time - 3600:  # Max 1 hour old
-            return False
-        
-        # Check chain continuity
-        if len(self.blocks) > 0:
-            last_block = self.blocks[-1]
-            
-            # Verify previous hash matches
-            if block.prev_hash != last_block.hash:
-                return False
-            
-            # Verify block height is correct
-            if block.height != last_block.height + 1:
-                return False
-            
-            # Verify timestamp is after previous block
-            if block.timestamp < last_block.timestamp:
-                return False
-        else:
-            # This should not happen as genesis block is created on init
-            return False
-=======
         # 1. Recompute hash and verify it matches
         computed_hash = compute_block_hash(
             block.prev_hash, 
@@ -209,7 +151,6 @@ class Blockchain:
             # First block should have height 1 and prev_hash of 0
             if block.height != 1:
                 return False
->>>>>>> origin
         
         return True
     

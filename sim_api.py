@@ -19,6 +19,7 @@ _miners: List[Miner] = []
 _network: Network = None
 _difficulty_controller: DifficultyController = None
 _ui_callback: Callable = None
+_event_queue = None
 
 def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
     """
@@ -28,11 +29,15 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
         config: Simulation configuration dictionary
         ui_callback: Function to call for UI updates
     """
-    global _simulation_running, _blockchain, _miners, _network, _difficulty_controller, _ui_callback
+    global _simulation_running, _blockchain, _miners, _network, _difficulty_controller, _ui_callback, _event_queue
     
     with _simulation_lock:
         if _simulation_running:
             return
+        
+        # Initialize event queue for UI updates
+        import queue
+        _event_queue = queue.Queue()
             
         # Initialize simulation components (reuse blockchain if it exists)
         if _blockchain is None:
@@ -49,23 +54,12 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
         # Configure blockchain
         _blockchain.set_difficulty(config.get('difficulty', 4))
         
-<<<<<<< HEAD
-        # Create miners with configured hash rates (computational power)
-        num_miners = config.get('num_miners', 3)
-        miner_rates = config.get('miner_rates', {})
-        
-        for i in range(num_miners):
-            miner_id = f"miner_{i+1}"
-            # Use configured rate or default progressive rate
-            hash_rate = miner_rates.get(miner_id, 1000 * (i + 1))
-=======
         # Create miners with configured hash rates
         num_miners = config.get('num_miners', 3)
         miner_rates = config.get('miner_rates', {})
         for i in range(num_miners):
             miner_id = f"miner_{i+1}"
-            hash_rate = miner_rates.get(miner_id, 100)  # Default 100 H/s
->>>>>>> origin
+            hash_rate = miner_rates.get(miner_id, 500)  # Default 500 H/s for 1 crore hash space
             miner = Miner(miner_id, hash_rate=hash_rate)
             _miners.append(miner)
             print(f"Created {miner_id} with hash rate: {hash_rate} H/s")
@@ -73,14 +67,10 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
         # Start network
         _network.start()
         
-<<<<<<< HEAD
-        # Start miners with blockchain reference
-=======
         # Set initial work and start miners
         head = _blockchain.get_latest_block()
         prev_hash = head.hash if head else 0
         height = head.height if head else 0
->>>>>>> origin
         for miner in _miners:
             miner.start(
                 on_block_found=_on_block_found,
@@ -172,15 +162,10 @@ def submit_data(data_str: str) -> None:
         if not _simulation_running:
             return
             
-<<<<<<< HEAD
-        # TODO: Implement data submission to mining queue
-        # This should update all miners with new data to mine
-=======
         # Update all miners with new data while preserving their current work
         head = _blockchain.get_latest_block()
         prev_hash = head.hash if head else 0
         height = head.height if head else 0
->>>>>>> origin
         for miner in _miners:
             miner.current_data = data_str
             
@@ -234,8 +219,6 @@ def get_stats() -> Dict[str, Any]:
             'difficulty': _difficulty_controller.get_current_difficulty() if _difficulty_controller else 0
         }
 
-<<<<<<< HEAD
-=======
 def _broadcast_new_work_to_miners():
     """Set current head/difficulty as work for all miners."""
     head = _blockchain.get_latest_block()
@@ -249,7 +232,6 @@ def _broadcast_new_work_to_miners():
         except Exception:
             pass
 
->>>>>>> origin
 def _on_block_found(block) -> None:
     """
     Callback when a miner finds a new block.
@@ -260,41 +242,6 @@ def _on_block_found(block) -> None:
     with _simulation_lock:
         if not _simulation_running:
             return
-<<<<<<< HEAD
-            
-        # Add block to blockchain
-        if _blockchain.add_block(block):
-            # Notify UI with block dictionary
-            if _ui_callback:
-                _ui_callback({
-                    'timestamp': time.time(),
-                    'message': f'Block #{block.height} found by {block.miner_id}',
-                    'type': 'block_found',
-                    'block': {
-                        'height': block.height,
-                        'hash': block.hash,
-                        'prev_hash': block.prev_hash,
-                        'nonce': block.nonce,
-                        'miner_id': block.miner_id,
-                        'timestamp': block.timestamp,
-                        'accepted': block.accepted  # Include accepted status
-                    }
-                })
-                
-            # Record block time for difficulty adjustment
-            if _difficulty_controller:
-                # TODO: Calculate actual block time
-                _difficulty_controller.record_block_time(10.0)  # Placeholder
-                
-                # Adjust difficulty if needed
-                if _difficulty_controller.should_adjust_difficulty():
-                    new_difficulty = _difficulty_controller.adjust_difficulty(_difficulty_controller.block_times)
-                    _blockchain.set_difficulty(new_difficulty)
-                    
-                    # Update all miners with new difficulty
-                    for miner in _miners:
-                        miner.difficulty = new_difficulty
-=======
 
         # Capture previous head to compute block interval
         prev_head = _blockchain.get_latest_block()
@@ -375,4 +322,3 @@ def _on_block_found(block) -> None:
 
             # Update miners with current head (in case the head changed due to another block)
             _broadcast_new_work_to_miners()
->>>>>>> origin

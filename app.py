@@ -18,6 +18,7 @@ try:
 except ImportError:
     SIM_API_AVAILABLE = False
     st.warning("⚠️ sim_api not available yet — UI loaded in mock mode")
+    print("sim_api not available yet — UI loaded in mock mode")
 
 # Import UI helpers
 try:
@@ -62,37 +63,6 @@ def process_event_queue():
                 st.session_state['events'] = st.session_state['events'][-500:]
     except queue.Empty:
         pass
-
-# Mock mode for testing UI without sim_api
-if not SIM_API_AVAILABLE:
-    # TODO: Remove this mock code when sim_api is available
-    def mock_ui_callback():
-        """Generate fake events for UI testing."""
-        fake_events = [
-            {
-                "type": "block_found",
-                "block": {
-                    "height": len(st.session_state['events']) + 1,
-                    "hash": f"0000abcd{hash(str(time.time()))[:8]}",
-                    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-                    "nonce": int(time.time()) % 100000,
-                    "miner_id": f"miner_{(len(st.session_state['events']) % 3) + 1}",
-                    "timestamp": time.time(),
-                    "accepted": True
-                },
-                "timestamp": time.time()
-            }
-        ]
-        for event in fake_events:
-            ui_callback(event)
-    
-    # Auto-generate mock events every 2 seconds
-    if st.session_state['sim_running'] and len(st.session_state['events']) < 10:
-        if 'last_mock_time' not in st.session_state:
-            st.session_state['last_mock_time'] = time.time()
-        elif time.time() - st.session_state['last_mock_time'] > 2:
-            mock_ui_callback()
-            st.session_state['last_mock_time'] = time.time()
 
 # Page configuration
 st.set_page_config(
@@ -163,16 +133,6 @@ with col1:
     
     with col_start:
         if st.button("▶️ Start Simulation", disabled=st.session_state['sim_running']):
-<<<<<<< HEAD
-            # Prepare miner rates from configured values
-            miner_rates = {}
-            for i in range(num_miners):
-                miner_id = f"miner_{i+1}"
-                if miner_id in st.session_state['miner_rates']:
-                    miner_rates[miner_id] = st.session_state['miner_rates'][miner_id]
-                else:
-                    miner_rates[miner_id] = 1000 * (i + 1)  # Default
-=======
             # Collect miner hash rates from UI
             miner_rates = {}
             for i in range(num_miners):
@@ -180,19 +140,14 @@ with col1:
                 if rate_key in st.session_state:
                     miner_rates[f"miner_{i+1}"] = st.session_state[rate_key]
                 else:
-                    miner_rates[f"miner_{i+1}"] = 100  # Default 100 H/s
->>>>>>> origin
+                    miner_rates[f"miner_{i+1}"] = 500  # Default 500 H/s
             
             config = {
                 'num_miners': num_miners,
                 'difficulty': difficulty,
                 'use_real_hash': use_real_hash,
                 'data': block_data,
-<<<<<<< HEAD
-                'miner_rates': miner_rates  # Pass configured rates
-=======
                 'miner_rates': miner_rates
->>>>>>> origin
             }
             
             if SIM_API_AVAILABLE:
@@ -239,15 +194,9 @@ with col1:
             mime="application/json"
         )
     
-<<<<<<< HEAD
-    # Miner rates expander - Allow configuration before and during simulation
-    with st.expander("⚡ Miner Computational Power (Hash Rates)", expanded=False):
-        st.caption("Configure hash rates BEFORE starting simulation. Higher hash rate = more computational power = faster mining")
-=======
     # Miner rates expander
     with st.expander("⚡ Miner Rates (Hash/s)", expanded=False):
         st.caption("⚠️ Hash rates can only be set before starting the simulation")
->>>>>>> origin
         for i in range(num_miners):
             miner_id = f"miner_{i+1}"
             # Default progressive hash rates: 1000, 2000, 3000, etc.
@@ -258,30 +207,15 @@ with col1:
                 st.session_state['miner_rates'][miner_id] = default_rate
             
             current_rate = st.number_input(
-<<<<<<< HEAD
-                f"Miner {i+1} (H/s)",
-                min_value=100,
-                max_value=10000,
-                value=st.session_state['miner_rates'][miner_id],
-                step=100,
-                key=f"miner_rate_{i}",
-                disabled=st.session_state['sim_running'],  # Can only change before simulation
-                help=f"Hash attempts per second. Set BEFORE starting simulation. Default: {default_rate} H/s"
-            )
-            
-            # Save the rate
-            st.session_state['miner_rates'][miner_id] = current_rate
-=======
                 f"Miner {i+1} (hashes per second)",
                 min_value=1,
-                max_value=10000,
-                value=100,  # Reduced default for better pacing
-                step=50,
+                max_value=100000,
+                value=500,  # Default 500 H/s for 1 crore hash space
+                step=100,
                 key=f"miner_rate_{i}",
                 disabled=st.session_state['sim_running'],
-                help="Number of hash attempts this miner makes per second. Lower = slower mining, more realistic."
+                help="Number of hash attempts per second. Higher values = faster mining. Recommended: 100-1000 for realistic pacing with 1 crore hash space."
             )
->>>>>>> origin
 
 with col2:
     st.subheader("📊 Visualization")
@@ -389,13 +323,7 @@ if st.session_state['sim_running']:
                         blocks.append(event_block)
     
     if blocks:
-<<<<<<< HEAD
-        # Sort by height
-        blocks_sorted = sorted(blocks, key=lambda b: b.get('height', 0))
-        block_html = render_block_chain(blocks_sorted[-10:])  # Show last 10 blocks
-=======
         block_html = render_block_chain(blocks)  # Show all blocks with scroll
->>>>>>> origin
         block_area.markdown(block_html, unsafe_allow_html=True)
     else:
         block_area.info("No blocks mined yet...")
