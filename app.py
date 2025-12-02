@@ -22,12 +22,13 @@ except ImportError:
 
 # Import UI helpers
 try:
-    from ui.render_helpers import render_block_card, render_block_chain, render_mining_log
+    from ui.block_renderer import render_blocks
+    from ui.render_helpers import render_mining_log
 except ImportError:
     # Fallback if helpers don't exist yet
     def render_block_card(block: dict) -> str:
         return f"<div>Block #{block.get('height', '?')}</div>"
-    def render_block_chain(blocks: list) -> str:
+    def render_blocks(blocks: list) -> str:
         return "<div>No blocks</div>"
     def render_mining_log(events: list, max_lines: int = 200) -> str:
         return "No events"
@@ -323,7 +324,7 @@ if st.session_state['sim_running']:
                         blocks.append(event_block)
     
     if blocks:
-        block_html = render_block_chain(blocks)  # Show all blocks with scroll
+        block_html = render_blocks(blocks)  # Show all blocks with scroll
         block_area.markdown(block_html, unsafe_allow_html=True)
     else:
         block_area.info("No blocks mined yet...")
@@ -353,7 +354,7 @@ else:
         
         if blocks:
             blocks_sorted = sorted(blocks, key=lambda b: b.get('height', 0))
-            block_html = render_block_chain(blocks_sorted[-10:])
+            block_html = render_blocks(blocks_sorted[-10:])
             block_area.markdown(block_html, unsafe_allow_html=True)
         else:
             block_area.info("No blocks mined yet...")
