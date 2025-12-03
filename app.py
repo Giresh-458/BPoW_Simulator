@@ -58,12 +58,98 @@ def process_event_queue():
         while not st.session_state['event_queue'].empty():
             event = st.session_state['event_queue'].get_nowait()
             st.session_state['events'].append(event)
-            
+
             # Keep only recent events to prevent memory issues
             if len(st.session_state['events']) > 1000:
                 st.session_state['events'] = st.session_state['events'][-500:]
     except queue.Empty:
         pass
+
+# Ensure we process any queued events early so metrics and logs reflect latest state
+process_event_queue()
+
+def _render_2d_blocks(fork_tree: Dict[str, Any]) -> str:
+    """
+    Render blocks in a simple blockchain explorer style with connections.
+    Main chain horizontally, forks below.
+    
+    Args:
+        fork_tree: Fork tree structure from get_fork_tree()
+    
+    Returns:
+        HTML string for clean blockchain visualization
+    """
+    if not fork_tree or not fork_tree.get('genesis'):
+        return '<div style="text-align: center; color: #999; padding: 20px;">No blocks yet</div>'
+    
+    genesis = fork_tree.get('genesis')
+    
+    # Collect all blocks by height
+    def get_level_blocks(node):
+        """Get blocks organized by height level."""
+        levels = {}
+        
+        def traverse(block):
+            height = block.get('height', 0)
+            if height not in levels:
+                levels[height] = []
+            levels[height].append(block)
+            
+            for child in block.get('children', []):
+                traverse(child)
+        
+        traverse(node)
+        return levels
+    
+    levels = get_level_blocks(genesis)
+    
+    html = '<div style="background: #f8f9fa; padding: 20px; border-radius: 8px; overflow-x: auto;">'
+    
+    # Draw each height level horizontally
+    for height in sorted(levels.keys()):
+        blocks = levels[height]
+        
+        html += '<div style="display: flex; gap: 20px; margin-bottom: 30px; align-items: center; flex-wrap: wrap;">'
+        
+        for idx, block in enumerate(blocks):
+            is_main = block.get('is_main', False)
+            block_hash = block.get('hash', '?')[:8]
+            
+            # Colors
+            if is_main:
+                bg = '#1e90ff'
+                text_color = 'white'
+            else:
+                bg = '#ff8c00'
+                text_color = 'white'
+            
+            # Block card
+            html += f'''
+            <div style="
+                background: {bg};
+                color: {text_color};
+                padding: 12px 16px;
+                border-radius: 6px;
+                min-width: 90px;
+                text-align: center;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+                border: 2px solid rgba(255,255,255,0.2);
+                font-family: monospace;
+            ">
+                <div style="font-weight: bold; font-size: 13px;">#{height}</div>
+                <div style="font-size: 10px; margin-top: 4px;">{block_hash}</div>
+            </div>
+            '''
+            
+            # Add arrow between blocks (except last in row)
+            if idx < len(blocks) - 1:
+                html += '<div style="font-size: 20px; opacity: 0.5; margin: 0 10px;">→</div>'
+        
+        html += '</div>'
+    
+    html += '</div>'
+    
+    return html
 
 # Page configuration
 st.set_page_config(
@@ -89,13 +175,7 @@ with col1:
         disabled=st.session_state['sim_running']
     )
     
-    # Use real SHA-256 checkbox
-    use_real_hash = st.checkbox(
-        "Use real SHA-256",
-        value=False,
-        key="use_real_hash",
-        disabled=st.session_state['sim_running']
-    )
+    # NOTE: Real SHA-256 option removed for now (simulation uses built-in hash)
     
     # Number of miners slider
     num_miners = st.slider(
@@ -146,7 +226,7 @@ with col1:
             config = {
                 'num_miners': num_miners,
                 'difficulty': difficulty,
-                'use_real_hash': use_real_hash,
+                # 'use_real_hash' removed — simulator uses internal hash model
                 'data': block_data,
                 'miner_rates': miner_rates
             }
@@ -231,12 +311,28 @@ with col2:
     st.markdown("**📝 Mining Log**")
     mining_log = st.empty()
     
+    # 2D Block visualization area
+    st.markdown("**🔗 Block Chain Map**")
+    block_map_area = st.empty()
+    
     # Metrics area
     st.markdown("**📈 Metrics**")
     metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
     
     with metrics_col1:
-        total_blocks = len([e for e in st.session_state['events'] if e.get('type') == 'block_found'])
+        # Prefer authoritative count from sim API when available
+        total_blocks = 0
+        if SIM_API_AVAILABLE:
+            try:
+                stats = get_stats()
+                if stats and 'blocks' in stats:
+                    total_blocks = len(stats['blocks'])
+            except Exception:
+                # Fallback to events
+                total_blocks = len([e for e in st.session_state['events'] if e.get('type') == 'block_accepted'])
+        else:
+            total_blocks = len([e for e in st.session_state['events'] if e.get('type') == 'block_accepted'])
+
         st.metric("Total Blocks", total_blocks)
     
     with metrics_col2:
@@ -253,18 +349,7 @@ with col2:
     with metrics_col4:
         st.metric("Current Difficulty", difficulty)
     
-    with metrics_col5:
-        # Calculate average block time from events
-        block_times = []
-        for event in st.session_state['events']:
-            if event.get('type') == 'block_found' and 'timestamp' in event:
-                block_times.append(event['timestamp'])
-        
-        if len(block_times) > 1:
-            avg_time = (max(block_times) - min(block_times)) / max(len(block_times) - 1, 1)
-            st.metric("Avg Block Time", f"{avg_time:.1f}s")
-        else:
-            st.metric("Avg Block Time", "N/A")
+    # Removed average block time metric per request
     
     # Selected miner details
     st.markdown("**👤 Selected Miner Details**")
@@ -298,8 +383,7 @@ with col2:
     else:
         st.info("No active miners")
 
-# Process events from queue (thread-safe)
-process_event_queue()
+# Events are processed earlier at startup via `process_event_queue()`
 
 # Update displays
 if st.session_state['sim_running']:
@@ -335,6 +419,17 @@ if st.session_state['sim_running']:
         mining_log.markdown(log_html, unsafe_allow_html=True)
     else:
         mining_log.info("No mining activity yet...")
+    
+    # Update 2D block visualization
+    try:
+        stats = get_stats()
+        if stats and 'fork_tree' in stats and stats['fork_tree'] and stats['fork_tree'].get('genesis'):
+            block_map_html = _render_2d_blocks(stats['fork_tree'])
+            block_map_area.markdown(block_map_html, unsafe_allow_html=True)
+        else:
+            block_map_area.info("Waiting for blocks...")
+    except Exception as e:
+        block_map_area.info("Blocks loading...")
     
     # Auto-refresh every 2 seconds
     time.sleep(2)

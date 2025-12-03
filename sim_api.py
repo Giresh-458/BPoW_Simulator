@@ -20,6 +20,8 @@ _network: Network = None
 _difficulty_controller: DifficultyController = None
 _ui_callback: Callable = None
 _event_queue = None
+_pruning_thread: threading.Thread = None
+_pruning_active = False
 
 def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
     """
@@ -44,7 +46,7 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
             _blockchain = Blockchain()
             print("\n[BLOCKCHAIN] New blockchain initialized")
         else:
-            print(f"\n[BLOCKCHAIN] Resuming blockchain at height {len(_blockchain.blocks)}")
+            print(f"\n[BLOCKCHAIN] Resuming blockchain at height {_blockchain.get_block_count()})")
             
         _miners = []
         _network = Network()
@@ -79,6 +81,15 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
                 difficulty=config.get('difficulty', 4),
                 data=config.get('data', 'Hello Blockchain!')
             )
+
+        # Broadcast initial work (head/difficulty/data) to all miners
+        _broadcast_new_work_to_miners()
+        
+        # Start branch pruning thread
+        global _pruning_thread, _pruning_active
+        _pruning_active = True
+        _pruning_thread = threading.Thread(target=_pruning_loop, daemon=True)
+        _pruning_thread.start()
             
         _simulation_running = True
         
@@ -91,7 +102,8 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
             })
             
             # Send genesis block to UI
-            genesis_block = _blockchain.blocks[0] if _blockchain.blocks else None
+            main_chain = _blockchain.get_main_chain()
+            genesis_block = main_chain[0] if main_chain else None
             if genesis_block:
                 _ui_callback({
                     'timestamp': time.time(),
@@ -110,11 +122,14 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
 
 def stop_simulation() -> None:
     """Stop the running simulation."""
-    global _simulation_running
+    global _simulation_running, _pruning_active
     
     with _simulation_lock:
         if not _simulation_running:
             return
+        
+        # Stop pruning thread
+        _pruning_active = False
             
         # Stop all miners
         for miner in _miners:
@@ -190,12 +205,18 @@ def get_stats() -> Dict[str, Any]:
                 'mining_log': 'Simulation not running',
                 'active_miners': 0,
                 'total_hash_rate': 0,
-                'difficulty': 0
+                'difficulty': 0,
+                'fork_tree': None
             }
             
-        # Collect block data with accepted status
+        # Collect main chain block data with accepted status
         blocks = []
-        for block in _blockchain.blocks:
+        try:
+            main_chain = _blockchain.get_main_chain()
+        except Exception:
+            main_chain = []
+
+        for block in main_chain:
             blocks.append({
                 'height': block.height,
                 'hash': block.hash,
@@ -206,6 +227,12 @@ def get_stats() -> Dict[str, Any]:
                 'nonce': block.nonce,
                 'accepted': block.accepted  # Include accepted status
             })
+        
+        # Get fork tree for visualization
+        try:
+            fork_tree = _blockchain.get_fork_tree()
+        except Exception:
+            fork_tree = None
             
         # Calculate mining stats
         active_miners = sum(1 for miner in _miners if miner.is_mining)
@@ -216,7 +243,8 @@ def get_stats() -> Dict[str, Any]:
             'mining_log': f'Active miners: {active_miners}, Total hash rate: {total_hash_rate:.2f}',
             'active_miners': active_miners,
             'total_hash_rate': total_hash_rate,
-            'difficulty': _difficulty_controller.get_current_difficulty() if _difficulty_controller else 0
+            'difficulty': _difficulty_controller.get_current_difficulty() if _difficulty_controller else 0,
+            'fork_tree': fork_tree
         }
 
 def _broadcast_new_work_to_miners():
@@ -264,61 +292,159 @@ def _on_block_found(block) -> None:
                 'accepted': False
             }
         }
-        _event_queue.put(discovery_event)
+        # Put into internal event queue and notify UI via callback (if available)
+        try:
+            _event_queue.put(discovery_event)
+        except Exception:
+            pass
+        if _ui_callback:
+            try:
+                _ui_callback(discovery_event)
+            except Exception:
+                pass
 
-        # Try to add block to blockchain (validation happens inside)
+        # Queue block for delivery through network with delay
+        network_delay = 0.1  # 100ms network delay (simulated via Timer)
+        
+        # Schedule delayed acceptance via a callback
+        # (in a real network, blocks would propagate over the network with latency)
+        threading.Timer(
+            network_delay,
+            lambda: _accept_block_delayed(block, prev_head, discovery_event)
+        ).start()
+
+        # END OF NEW DELAYED NETWORK LOGIC
+
+
+def _accept_block_delayed(block, prev_head, discovery_event) -> None:
+    """
+    Accept a block after network delay (called via Timer).
+    
+    Args:
+        block: The block to accept
+        prev_head: The previous chain head
+        discovery_event: The discovery event that was already sent
+    """
+    with _simulation_lock:
+        if not _simulation_running:
+            return
+        
+        # Now validate and add the block
         added = _blockchain.add_block(block)
+        _process_block_acceptance(block, added, prev_head, discovery_event)
 
-        if added:
-            print(f"[ACCEPTED] Block #{block.height} ACCEPTED by network (hash: {block.hash}, prev: {block.prev_hash})")
-            accepted_event = discovery_event.copy()
-            accepted_event['timestamp'] = time.time()
-            accepted_event['message'] = f'Block #{block.height} accepted (by {block.miner_id})'
-            accepted_event['type'] = 'block_accepted'
-            accepted_event['block']['accepted'] = True
+
+def _process_block_acceptance(block, added, prev_head, discovery_event) -> None:
+    """
+    Process the result of block validation and acceptance.
+    
+    Args:
+        block: The block that was validated
+        added: Whether the block was added to the chain
+        prev_head: The previous chain head
+        discovery_event: The discovery event that was sent
+    """
+    if added:
+        print(f"[ACCEPTED] Block #{block.height} ACCEPTED by network (hash: {block.hash}, prev: {block.prev_hash})")
+        accepted_event = discovery_event.copy()
+        accepted_event['timestamp'] = time.time()
+        accepted_event['message'] = f'Block #{block.height} accepted (by {block.miner_id})'
+        accepted_event['type'] = 'block_accepted'
+        accepted_event['block']['accepted'] = True
+        try:
             _event_queue.put(accepted_event)
+        except Exception:
+            pass
+        if _ui_callback:
+            try:
+                _ui_callback(accepted_event)
+            except Exception:
+                pass
 
-            # If we had a previous head, compute block time
-            if prev_head:
-                block_time = block.timestamp - prev_head.timestamp
-                if _difficulty_controller:
-                    _difficulty_controller.record_block_time(block_time)
+        # If we had a previous head, compute block time
+        if prev_head:
+            block_time = block.timestamp - prev_head.timestamp
+            if _difficulty_controller:
+                _difficulty_controller.record_block_time(block_time)
 
-                    # Adjust difficulty if controller desires
-                    if _difficulty_controller.should_adjust_difficulty():
-                        new_difficulty = _difficulty_controller.adjust_difficulty(_difficulty_controller.block_times)
-                        _blockchain.set_difficulty(new_difficulty)
-                        # Update miners' difficulty/work
-                        for miner in _miners:
-                            miner.difficulty = new_difficulty
-                        # Broadcast the change
-                        _event_queue.put({
-                            'timestamp': time.time(),
-                            'message': f'Difficulty adjusted to {new_difficulty}',
-                            'type': 'difficulty_update',
-                            'difficulty': new_difficulty
-                        })
+                # Adjust difficulty if controller desires
+                if _difficulty_controller.should_adjust_difficulty():
+                    new_difficulty = _difficulty_controller.adjust_difficulty(_difficulty_controller.block_times)
+                    _blockchain.set_difficulty(new_difficulty)
+                    # Update miners' difficulty/work
+                    for miner in _miners:
+                        miner.difficulty = new_difficulty
+                    # Broadcast the change
+                    _event_queue.put({
+                        'timestamp': time.time(),
+                        'message': f'Difficulty adjusted to {new_difficulty}',
+                        'type': 'difficulty_update',
+                        'difficulty': new_difficulty
+                    })
 
-            # Broadcast new work (new head) to miners
-            _broadcast_new_work_to_miners()
+        # Broadcast new work (new head) to miners
+        _broadcast_new_work_to_miners()
 
-        else:
-            # STALE BLOCK EXPLANATION:
-            # A block becomes "stale" when it's rejected by validation.
-            # Common reasons:
-            # 1. Built on old chain head (another miner found a block first)
-            # 2. Hash doesn't meet difficulty requirement
-            # 3. Invalid prev_hash (doesn't match current chain tip)
-            # 4. Timestamp issues (too far in future, or not monotonic)
-            # This is normal in PoW - miners sometimes work on outdated chain state.
-            print(f"[REJECTED] Block #{block.height} REJECTED/STALE from {block.miner_id} (hash: {block.hash})")
-            print(f"           Reason: Block doesn't meet validation (likely mining on old chain head)")
-            stale_event = discovery_event.copy()
-            stale_event['timestamp'] = time.time()
-            stale_event['message'] = f'Block #{block.height} from {block.miner_id} is stale/rejected'
-            stale_event['type'] = 'block_stale'
-            stale_event['block']['accepted'] = False
+    else:
+        # STALE BLOCK EXPLANATION:
+        # A block becomes "stale" when it's rejected by validation.
+        # Common reasons:
+        # 1. Built on old chain head (another miner found a block first)
+        # 2. Hash doesn't meet difficulty requirement
+        # 3. Invalid prev_hash (doesn't match current chain tip)
+        # 4. Timestamp issues (too far in future, or not monotonic)
+        # This is normal in PoW - miners sometimes work on outdated chain state.
+        print(f"[REJECTED] Block #{block.height} REJECTED/STALE from {block.miner_id} (hash: {block.hash})")
+        print(f"           Reason: Block doesn't meet validation (likely mining on old chain head)")
+        stale_event = discovery_event.copy()
+        stale_event['timestamp'] = time.time()
+        stale_event['message'] = f'Block #{block.height} from {block.miner_id} is stale/rejected'
+        stale_event['type'] = 'block_stale'
+        stale_event['block']['accepted'] = False
+        try:
             _event_queue.put(stale_event)
+        except Exception:
+            pass
+        if _ui_callback:
+            try:
+                _ui_callback(stale_event)
+            except Exception:
+                pass
 
-            # Update miners with current head (in case the head changed due to another block)
-            _broadcast_new_work_to_miners()
+        # Update miners with current head (in case the head changed due to another block)
+        _broadcast_new_work_to_miners()
+
+
+def _pruning_loop() -> None:
+    """
+    Background thread that periodically prunes old fork branches.
+    Runs every 5 seconds while simulation is active.
+    """
+    global _pruning_active, _blockchain
+    
+    while _pruning_active:
+        try:
+            time.sleep(5)  # Prune every 5 seconds
+            
+            if _blockchain and _simulation_running:
+                with _simulation_lock:
+                    # Prune branches that are more than 10 blocks behind main tip
+                    pruned_count = _blockchain.prune_old_branches(max_depth_behind=10)
+                    
+                    if pruned_count > 0:
+                        print(f"[PRUNING] Removed {pruned_count} old fork block(s)")
+                        
+                        # Optionally notify UI about pruning
+                        if _ui_callback:
+                            try:
+                                _ui_callback({
+                                    'timestamp': time.time(),
+                                    'message': f'Pruned {pruned_count} old fork block(s)',
+                                    'type': 'pruning',
+                                    'blocks_pruned': pruned_count
+                                })
+                            except Exception:
+                                pass
+        except Exception as e:
+            print(f"[PRUNING ERROR] {e}")
+            pass
