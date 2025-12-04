@@ -10,10 +10,12 @@ from sim.core import Blockchain
 from sim.miner import Miner
 from sim.network import Network
 from sim.difficulty import DifficultyController
+import math
 
 # Global simulation state
 _simulation_lock = threading.Lock()
 _simulation_running = False
+_simulation_paused = False
 _blockchain: Blockchain = None
 _miners: List[Miner] = []
 _network: Network = None
@@ -22,6 +24,10 @@ _ui_callback: Callable = None
 _event_queue = None
 _pruning_thread: threading.Thread = None
 _pruning_active = False
+_recent_block_times: list[float] = []
+_accepted_count = 0
+_stale_count = 0
+_network_delay = 0.1  # seconds
 
 def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
     """
@@ -85,8 +91,18 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
                 data=config.get('data', 'Hello Blockchain!')
             )
 
+        # Configure network delay from UI config (milliseconds)
+        try:
+            delay_ms = float(config.get('network_delay_ms', 100))
+            global _network_delay
+            _network_delay = max(0.0, delay_ms / 1000.0)
+        except Exception:
+            pass
+
         # Broadcast initial work (head/difficulty/data) to all miners
         _broadcast_new_work_to_miners()
+        # Adjust difficulty based on current total hash rate to simulate network stability
+        _apply_difficulty_for_hash_rate()
         
         # Start branch pruning thread
         global _pruning_thread, _pruning_active
@@ -125,7 +141,7 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
 
 def stop_simulation() -> None:
     """Stop the running simulation."""
-    global _simulation_running, _pruning_active
+    global _simulation_running, _pruning_active, _simulation_paused
     
     with _simulation_lock:
         if not _simulation_running:
@@ -143,6 +159,7 @@ def stop_simulation() -> None:
             _network.stop()
             
         _simulation_running = False
+        _simulation_paused = False
         
         # Notify UI
         if _ui_callback:
@@ -150,6 +167,42 @@ def stop_simulation() -> None:
                 'timestamp': time.time(),
                 'message': 'Simulation stopped',
                 'type': 'simulation_stop'
+            })
+
+def pause_simulation() -> None:
+    """Pause miners without stopping the simulation components."""
+    global _simulation_paused
+    with _simulation_lock:
+        if not _simulation_running or _simulation_paused:
+            return
+        _simulation_paused = True
+        for miner in _miners:
+            miner.pause()
+        if _ui_callback:
+            _ui_callback({
+                'timestamp': time.time(),
+                'message': 'Simulation paused',
+                'type': 'simulation_pause'
+            })
+
+def resume_simulation() -> None:
+    """Resume miners if simulation is paused."""
+    global _simulation_paused
+    with _simulation_lock:
+        if not _simulation_running or not _simulation_paused:
+            return
+        _simulation_paused = False
+        for miner in _miners:
+            miner.resume()
+        # Broadcast current work to ensure miners sync to latest head/difficulty
+        _broadcast_new_work_to_miners()
+        # Recompute difficulty against active miners/hash rate
+        _apply_difficulty_for_hash_rate()
+        if _ui_callback:
+            _ui_callback({
+                'timestamp': time.time(),
+                'message': 'Simulation resumed',
+                'type': 'simulation_resume'
             })
 
 def reset_simulation() -> None:
@@ -171,6 +224,11 @@ def reset_simulation() -> None:
         _miners = []
         _network = None
         _difficulty_controller = None
+        # Reset counters
+        global _recent_block_times, _accepted_count, _stale_count
+        _recent_block_times = []
+        _accepted_count = 0
+        _stale_count = 0
         
         print("[RESET] Blockchain and simulation state cleared")
 
@@ -190,6 +248,8 @@ def set_miner_rate(miner_id: str, rate: float) -> None:
             if miner.id == miner_id:
                 miner.set_hash_rate(rate)
                 break
+        # Re-apply difficulty targets based on aggregate hash rate
+        _apply_difficulty_for_hash_rate()
 
 def submit_data(data_str: str) -> None:
     """
@@ -260,16 +320,29 @@ def get_stats() -> Dict[str, Any]:
             fork_tree = None
             
         # Calculate mining stats
-        active_miners = sum(1 for miner in _miners if miner.is_mining)
+        active_miners = sum(1 for miner in _miners if miner.is_mining and not miner.paused)
         total_hash_rate = sum(miner.hash_rate for miner in _miners)
         
+        # Derive simple stability metrics
+        fork_rate = 0.0
+        total = _accepted_count + _stale_count
+        if total > 0:
+            fork_rate = _stale_count / total
+
         return {
             'blocks': blocks,
             'mining_log': f'Active miners: {active_miners}, Total hash rate: {total_hash_rate:.2f}',
             'active_miners': active_miners,
             'total_hash_rate': total_hash_rate,
             'difficulty': _difficulty_controller.get_current_difficulty() if _difficulty_controller else 0,
-            'fork_tree': fork_tree
+            'fork_tree': fork_tree,
+            'recent_block_times': list(_recent_block_times),
+            'avg_block_time': (sum(_recent_block_times)/len(_recent_block_times)) if _recent_block_times else None,
+            'stale_count': _stale_count,
+            'accepted_count': _accepted_count,
+            'fork_rate': fork_rate,
+            'network_delay_ms': int(_network_delay * 1000),
+            'paused': _simulation_paused
         }
 
 def _broadcast_new_work_to_miners():
@@ -329,7 +402,7 @@ def _on_block_found(block) -> None:
                 pass
 
         # Queue block for delivery through network with delay
-        network_delay = 0.1  # 100ms network delay (simulated via Timer)
+        network_delay = _network_delay  # configurable network delay
         
         # Schedule delayed acceptance via a callback
         # (in a real network, blocks would propagate over the network with latency)
@@ -391,6 +464,14 @@ def _process_block_acceptance(block, added, prev_head, discovery_event) -> None:
             block_time = block.timestamp - prev_head.timestamp
             if _difficulty_controller:
                 _difficulty_controller.record_block_time(block_time)
+            # Track recent block times (limit to last 20)
+            try:
+                global _recent_block_times, _accepted_count
+                _recent_block_times.append(block_time)
+                _recent_block_times = _recent_block_times[-20:]
+                _accepted_count += 1
+            except Exception:
+                pass
 
                 # Adjust difficulty if controller desires
                 if _difficulty_controller.should_adjust_difficulty():
@@ -438,6 +519,28 @@ def _process_block_acceptance(block, added, prev_head, discovery_event) -> None:
 
         # Update miners with current head (in case the head changed due to another block)
         _broadcast_new_work_to_miners()
+        # Count stale
+        try:
+            global _stale_count
+            _stale_count += 1
+        except Exception:
+            pass
+
+def set_network_delay_ms(ms: int) -> None:
+    """Update network propagation delay (ms) for block acceptance."""
+    global _network_delay
+    with _simulation_lock:
+        try:
+            _network_delay = max(0.0, float(ms) / 1000.0)
+            if _event_queue:
+                _event_queue.put({
+                    'timestamp': time.time(),
+                    'message': f'Network delay set to {ms} ms',
+                    'type': 'network_delay_update',
+                    'network_delay_ms': ms
+                })
+        except Exception:
+            pass
 
 
 def _pruning_loop() -> None:
@@ -518,3 +621,47 @@ def _pruning_loop() -> None:
         except Exception as e:
             print(f"[PRUNING ERROR] {e}")
             pass
+
+def _apply_difficulty_for_hash_rate() -> None:
+    """Adjust difficulty based on total hash rate/active miners to simulate network tuning.
+
+    Educational heuristic: higher aggregate hash rate increases difficulty;
+    lower aggregate hash rate decreases difficulty, bounded to [1, 8].
+    """
+    global _blockchain, _difficulty_controller
+    if not _blockchain:
+        return
+    try:
+        total_hash_rate = sum(miner.hash_rate for miner in _miners if miner.is_mining and not miner.paused)
+        # Simple bucketed mapping for clarity in UI
+        # <1.5k -> 2, <3k -> 3, <6k -> 4, <12k -> 5, else 6
+        if total_hash_rate < 1500:
+            desired = 2
+        elif total_hash_rate < 3000:
+            desired = 3
+        elif total_hash_rate < 6000:
+            desired = 4
+        elif total_hash_rate < 12000:
+            desired = 5
+        else:
+            desired = 6
+
+        desired = max(1, min(8, desired))
+
+        current = _difficulty_controller.get_current_difficulty() if _difficulty_controller else _blockchain.difficulty
+        if desired != current:
+            _blockchain.set_difficulty(desired)
+            if _difficulty_controller:
+                _difficulty_controller.current_difficulty = desired
+            for miner in _miners:
+                miner.difficulty = desired
+            _broadcast_new_work_to_miners()
+            if _event_queue:
+                _event_queue.put({
+                    'timestamp': time.time(),
+                    'message': f'Difficulty auto-adjusted to {desired} (active hash rate: {total_hash_rate:.0f} H/s)',
+                    'type': 'difficulty_update',
+                    'difficulty': desired
+                })
+    except Exception:
+        pass

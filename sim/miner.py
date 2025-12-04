@@ -32,6 +32,7 @@ class Miner:
         self.id = miner_id
         self.hash_rate = float(hash_rate)  # Hashes per second
         self.is_mining = False
+        self.paused = False
         self.mining_thread: Optional[threading.Thread] = None
         self.on_block_found: Optional[Callable] = None
         self.blockchain: Optional[Blockchain] = None
@@ -79,6 +80,14 @@ class Miner:
         self.is_mining = False
         if self.mining_thread:
             self.mining_thread.join(timeout=1.0)
+
+    def pause(self) -> None:
+        """Pause the mining loop without tearing down the thread."""
+        self.paused = True
+
+    def resume(self) -> None:
+        """Resume mining if previously paused."""
+        self.paused = False
             
     def _mining_loop(self) -> None:
         """Main mining loop using a single consistent model.
@@ -92,6 +101,10 @@ class Miner:
         cycle_time = 0.05  # Reduced from 0.1 to 0.05 for more responsive mining
 
         while self.is_mining:
+            # If paused, sleep briefly and continue
+            if self.paused:
+                time.sleep(0.05)
+                continue
             # Snapshot work atomically
             with self._lock:
                 prev_hash = self.prev_hash

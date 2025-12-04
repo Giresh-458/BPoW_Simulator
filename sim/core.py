@@ -250,6 +250,7 @@ class Blockchain:
                 return {
                     'hash': block_hash,
                     'height': block.height,
+                    'prev_hash': block.prev_hash,
                     'miner_id': block.miner_id,
                     'is_main': is_main,
                     'accepted': block.accepted,

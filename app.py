@@ -35,6 +35,8 @@ if 'events' not in st.session_state:
     st.session_state['events'] = []
 if 'sim_running' not in st.session_state:
     st.session_state['sim_running'] = False
+if 'paused' not in st.session_state:
+    st.session_state['paused'] = False
 if 'event_queue' not in st.session_state:
     st.session_state['event_queue'] = queue.Queue()
 if 'miner_rates' not in st.session_state:
@@ -67,98 +69,161 @@ process_event_queue()
 
 def _render_2d_blocks(fork_tree: Dict[str, Any]) -> str:
     """
-    Render blocks in a simple blockchain explorer style with connections.
-    Main chain horizontally, forks below.
-    
-    Args:
-        fork_tree: Fork tree structure from get_fork_tree()
-    
-    Returns:
-        HTML string for clean blockchain visualization
+    Render a simple SVG tree: circles (nodes) with lines to parent.
+    Main chain nodes are blue, forks are orange.
     """
     if not fork_tree or not fork_tree.get('genesis'):
-        return '<div style="text-align: center; color: #999; padding: 20px;">No blocks yet</div>'
-    
-    genesis = fork_tree.get('genesis')
-    
-    # Collect all blocks by height
-    def get_level_blocks(node):
-        """Get blocks organized by height level."""
-        levels = {}
-        
-        def traverse(block):
-            height = block.get('height', 0)
-            if height not in levels:
-                levels[height] = []
-            levels[height].append(block)
-            
-            for child in block.get('children', []):
-                traverse(child)
-        
-        traverse(node)
-        return levels
-    
-    levels = get_level_blocks(genesis)
-    
-    html = '<div style="background: #f8f9fa; padding: 20px; border-radius: 8px; overflow-x: auto;">'
-    html += '<div style="margin-bottom: 10px; font-size: 12px;">'
-    html += '<span style="background: #1e90ff; color: white; padding: 4px 8px; border-radius: 4px; margin-right: 10px;">■ Main Chain</span>'
-    html += '<span style="background: #ff8c00; color: white; padding: 4px 8px; border-radius: 4px;">■ Stale/Fork</span>'
-    html += '</div>'
-    
-    # Draw each height level horizontally
-    for height in sorted(levels.keys()):
-        blocks = levels[height]
-        
-        html += '<div style="display: flex; gap: 20px; margin-bottom: 30px; align-items: center; flex-wrap: wrap;">'
-        
-        for idx, block in enumerate(blocks):
-            is_main = block.get('is_main', False)
-            is_accepted = block.get('accepted', False)
-            block_hash = block.get('hash', '?')[:8]
-            miner_id = block.get('miner_id', '?')
-            
-            # Colors and styling
-            if is_main:
-                bg = '#1e90ff'
-                text_color = 'white'
-                border = '2px solid rgba(255,255,255,0.2)'
-                label = '✓'
-            else:
-                bg = '#ff8c00'
-                text_color = 'white'
-                border = '2px dashed rgba(255,255,255,0.4)'
-                label = '✗ STALE'
-            
-            # Block card
-            html += f'''
-            <div style="
-                background: {bg};
-                color: {text_color};
-                padding: 12px 16px;
-                border-radius: 6px;
-                min-width: 110px;
-                text-align: center;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-                border: {border};
-                font-family: monospace;
-            ">
-                <div style="font-size: 9px; opacity: 0.8; margin-bottom: 2px;">{label}</div>
-                <div style="font-weight: bold; font-size: 13px;">#{height}</div>
-                <div style="font-size: 10px; margin-top: 4px;">{block_hash}</div>
-                <div style="font-size: 9px; opacity: 0.7; margin-top: 2px;">{miner_id}</div>
-            </div>
-            '''
-            
-            # Add arrow between blocks (except last in row)
-            if idx < len(blocks) - 1:
-                html += '<div style="font-size: 20px; opacity: 0.5; margin: 0 10px;">→</div>'
-        
-        html += '</div>'
-    
-    html += '</div>'
-    
-    return html
+        return '<div style="text-align:center;color:#999;padding:12px;">No blocks yet</div>'
+
+    root = fork_tree.get('genesis')
+    tip_height = fork_tree.get('tip_height', None)
+
+    # Collect nodes by height (y-axis) and sibling index (x-axis)
+    levels: Dict[int, List[Dict[str, Any]]] = {}
+
+    def traverse(node: Dict[str, Any]):
+        h = int(node.get('height', 0))
+        levels.setdefault(h, []).append(node)
+        for c in node.get('children', []) or []:
+            traverse(c)
+
+    traverse(root)
+
+    # Layout parameters (read from session for user-tunable layout)
+    # Vertical layout: Y = height (top to bottom), X = sibling order (left to right)
+    x_gap = int(st.session_state.get('graph_x_gap', 140))
+    y_gap = int(st.session_state.get('graph_y_gap', 90))
+    radius = int(st.session_state.get('graph_node_radius', 16))
+    zoom = float(st.session_state.get('graph_zoom', 1.0))
+    theme = st.session_state.get('graph_theme', 'light')
+    color_by_miner = bool(st.session_state.get('graph_color_by_miner', False))
+    padding = 40
+
+    max_height = max(levels.keys()) if levels else 0
+    max_rows = max(len(levels[h]) for h in levels) if levels else 1
+    width = padding * 2 + max_rows * x_gap
+    height = padding * 2 + (max_height + 1) * y_gap
+    width = int(width * zoom)
+    height = int(height * zoom)
+
+    # Assign positions
+    positions: Dict[str, tuple] = {}
+    for h in sorted(levels.keys()):
+        row = levels[h]
+        # Center siblings around the middle to avoid left bias
+        row_count = len(row)
+        total_row_width = (row_count - 1) * x_gap
+        base_x = padding + (max_rows * x_gap - total_row_width) / 2
+        for idx, node in enumerate(row):
+            # X determined by sibling index (centered), Y by block height
+            x = base_x + idx * x_gap
+            y = padding + h * y_gap
+            positions[str(node.get('hash'))] = (x, y)
+
+    # Build SVG elements
+    lines = []
+    circles = []
+    labels = []
+
+    # Theme colors
+    if theme == 'dark':
+        bg_color = '#0f172a'
+        grid_color = '#233148'
+        main_color = '#60a5fa'
+        fork_color = '#f59e0b'
+        label_color = '#e5e7eb'
+        tip_color = '#22c55e'
+        stroke_color = '#94a3b8'
+    else:  # light
+        bg_color = '#f8f9fa'
+        grid_color = '#eeeeee'
+        main_color = '#1e90ff'
+        fork_color = '#ff8c00'
+        label_color = '#ffffff'
+        tip_color = '#2ecc71'
+        stroke_color = '#999999'
+
+    # Miner-based color palette
+    miner_palette = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#f472b6', '#22c55e', '#eab308', '#a3a3a3']
+
+    def color(node):
+        if color_by_miner:
+            miner_id = str(node.get('miner_id',''))
+            # Hash the miner_id to index into palette
+            idx = (abs(hash(miner_id)) % len(miner_palette)) if miner_id else 0
+            return miner_palette[idx]
+        return main_color if node.get('is_main', False) else fork_color
+
+    # Draw connectors (orthogonal or curved) for a top-to-bottom vertical flow
+    for h in sorted(levels.keys()):
+        for node in levels[h]:
+            prev = node.get('prev_hash')
+            if prev:
+                child_pos = positions.get(str(node.get('hash')))
+                parent_pos = positions.get(str(prev))
+                if child_pos and parent_pos:
+                    x1, y1 = child_pos
+                    x2, y2 = parent_pos
+                    if st.session_state.get('graph_curved', False):
+                        # Gentle vertical curve from parent to child
+                        my = (y1 + y2) / 2
+                        lines.append(
+                            f'<path d="M {x2} {y2} C {x2} {my}, {x1} {my}, {x1} {y1}" stroke="{stroke_color}" stroke-width="1.2" fill="none" />'
+                        )
+                    else:
+                        # Vertical-first orthogonal connector
+                        lines.append(
+                            f'<path d="M {x2} {y2} L {x2} {(y2+y1)/2} L {x1} {(y2+y1)/2} L {x1} {y1}" stroke="{stroke_color}" stroke-width="1.2" fill="none" />'
+                        )
+
+    # Draw nodes
+    for h in sorted(levels.keys()):
+        for node in levels[h]:
+            x, y = positions.get(str(node.get('hash')), (padding, padding))
+            fill = color(node)
+            short_hash = str(node.get('hash'))[:6]
+            short_prev = (str(node.get('prev_hash'))[:6] if node.get('prev_hash') else 'genesis')
+            miner = node.get('miner_id','')
+            # Node circle with tooltip
+            circles.append(
+                f"""
+                <g>
+                    <circle cx="{x}" cy="{y}" r="{radius}" fill="{fill}" opacity="0.9" />
+                    <title>#{node.get('height',0)}\nhash:{short_hash}\nprev:{short_prev}\nminer:{miner}</title>
+                </g>
+                """
+            )
+            if st.session_state.get('graph_show_labels', True):
+                labels.append(f'<text x="{x}" y="{y+4}" text-anchor="middle" font-size="10" fill="{label_color}" font-family="monospace">{short_hash}</text>')
+
+            # Highlight tip node on main chain
+            if tip_height is not None and node.get('is_main', False) and int(node.get('height', -1)) == tip_height:
+                circles.append(f'<circle cx="{x}" cy="{y}" r="{radius+4}" fill="none" stroke="{tip_color}" stroke-width="2" />')
+                labels.append(f'<text x="{x}" y="{y - radius - 6}" text-anchor="middle" font-size="10" fill="{tip_color}" font-family="monospace">TIP</text>')
+
+    legend = """
+        <g>
+            <rect x="10" y="10" width="140" height="24" rx="6" fill="#fff" stroke="#ddd" />
+            <circle cx="26" cy="22" r="6" fill="#1e90ff" />
+            <text x="38" y="26" font-size="11" fill="#333">Main</text>
+            <circle cx="86" cy="22" r="6" fill="#ff8c00" />
+            <text x="98" y="26" font-size="11" fill="#333">Fork</text>
+        </g>
+    """
+
+    # Optional light grid background to aid readability
+    grid = []
+    if st.session_state.get('graph_show_grid', True):
+        for h in range(max_height + 1):
+            y = padding + h * y_gap
+            grid.append(f'<line x1="0" y1="{y}" x2="{width}" y2="{y}" stroke="{grid_color}" stroke-width="1" />')
+
+    svg = (
+        f'<svg width="100%" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" style="background:{bg_color};border-radius:8px" preserveAspectRatio="xMidYMid meet">'
+        + legend + ''.join(grid) + ''.join(lines) + ''.join(circles) + ''.join(labels) + '</svg>'
+    )
+
+    return svg
 
 # Page configuration
 st.set_page_config(
@@ -176,8 +241,12 @@ col1, col2 = st.columns([1, 2])
 with col1:
     st.subheader("Controls")
     
-    # Default block data (not shown to user)
-    block_data = "PoW Block Data"
+    # User-provided block data
+    block_data = st.text_input(
+        "Block data (message)",
+        value=st.session_state.get('block_data', "Hello Blockchain!"),
+        help="This message is included in mined blocks. You can change it anytime.")
+    st.session_state['block_data'] = block_data
     
     # Number of miners slider
     num_miners = st.slider(
@@ -188,19 +257,44 @@ with col1:
         key="num_miners",
         disabled=st.session_state['sim_running']
     )
+
+    # Network delay slider (ms)
+    net_delay_ms = st.slider(
+        "Network delay (ms)",
+        min_value=0,
+        max_value=1000,
+        value=st.session_state.get('network_delay_ms', 100),
+        help="Simulated propagation delay for blocks; higher increases fork chance."
+    )
+    st.session_state['network_delay_ms'] = net_delay_ms
+
+    # Fork Stress Mode toggle (pre-start configuration)
+    stress_col1, stress_col2 = st.columns([1,1])
+    with stress_col1:
+        fork_stress = st.checkbox("Fork Stress Mode", value=st.session_state.get('fork_stress', False))
+        st.session_state['fork_stress'] = fork_stress
+    with stress_col2:
+        st.caption("Sets high delay, low difficulty, and equal high miner rates before start.")
     
     # Global difficulty slider with human-friendly description
     # Get live difficulty if simulation is running
     live_difficulty = None
-    if st.session_state['sim_running'] and SIM_API_AVAILABLE:
+    # Reconcile UI flags with backend state if available
+    if SIM_API_AVAILABLE:
         try:
             stats = get_stats()
-            if stats and 'difficulty' in stats:
-                live_difficulty = stats['difficulty']
+            if stats:
+                # Sync flags
+                backend_paused = bool(stats.get('paused', False))
+                # If backend indicates not running (empty blocks and mining_log), keep UI safe defaults
+                # We primarily sync pause flag; sim_running stays driven by Start/Reset to avoid flicker
+                st.session_state['paused'] = backend_paused
+                # Live difficulty
+                if 'difficulty' in stats:
+                    live_difficulty = stats['difficulty']
         except Exception:
+            # If stats retrieval fails, keep the previous/default difficulty
             pass
-    
-    # Use live difficulty for slider value if available, otherwise use session state
     difficulty_value = live_difficulty if live_difficulty is not None else st.session_state.get('difficulty', 4)
     
     difficulty = st.slider(
@@ -239,12 +333,22 @@ with col1:
                     miner_rates[f"miner_{i+1}"] = st.session_state[rate_key]
                 else:
                     miner_rates[f"miner_{i+1}"] = 500  # Default 500 H/s
+
+            # Apply Fork Stress Mode overrides
+            if st.session_state.get('fork_stress', False):
+                # Use 8 miners at ~10k H/s, lower difficulty, higher network delay
+                num_miners = max(num_miners, 8)
+                difficulty = 2
+                net_delay_ms = 600
+                # Normalize miners to ~10k H/s
+                miner_rates = {f"miner_{i+1}": 10000 for i in range(num_miners)}
             
             config = {
                 'num_miners': num_miners,
                 'difficulty': difficulty,
                 # 'use_real_hash' removed — simulator uses internal hash model
                 'data': block_data,
+                'network_delay_ms': net_delay_ms,
                 'miner_rates': miner_rates
             }
             
@@ -254,48 +358,42 @@ with col1:
                 st.info("Mock mode: Simulation started")
             
             st.session_state['sim_running'] = True
+            st.session_state['paused'] = False
             st.success("Simulation started!")
             st.rerun()
     
     with col_stop:
-        if st.session_state['sim_running']:
+        # Pause/Resume controls (true pause without stopping components)
+        # Determine paused/running via backend if available
+        backend_paused = None
+        if SIM_API_AVAILABLE:
+            try:
+                stats = get_stats()
+                backend_paused = bool(stats.get('paused', False))
+            except Exception:
+                backend_paused = None
+        ui_paused = st.session_state['paused'] if backend_paused is None else backend_paused
+
+        if st.session_state['sim_running'] and not ui_paused:
             if st.button("⏸️ Pause Simulation"):
                 if SIM_API_AVAILABLE:
-                    stop_simulation()
-                st.session_state['sim_running'] = False
-                st.success("Simulation paused!")
-                st.rerun()
-        else:
-            if st.button("▶️ Resume Simulation"):
-                # Resume with current configuration
-                miner_rates = {}
-                for i in range(num_miners):
-                    rate_key = f"miner_rate_{i}"
-                    if rate_key in st.session_state:
-                        miner_rates[f"miner_{i+1}"] = st.session_state[rate_key]
-                    else:
-                        miner_rates[f"miner_{i+1}"] = 500
-                
-                # Get current difficulty from blockchain if it exists, otherwise use slider
-                resume_difficulty = difficulty
-                if SIM_API_AVAILABLE:
                     try:
-                        stats = get_stats()
-                        if stats and 'difficulty' in stats:
-                            resume_difficulty = stats['difficulty']
+                        from sim_api import pause_simulation
+                        pause_simulation()
                     except Exception:
                         pass
-                
-                config = {
-                    'num_miners': num_miners,
-                    'difficulty': resume_difficulty,
-                    'data': block_data,
-                    'miner_rates': miner_rates
-                }
-                
+                st.session_state['paused'] = True
+                st.success("Simulation paused!")
+                st.rerun()
+        elif st.session_state['sim_running'] and ui_paused:
+            if st.button("▶️ Resume Simulation"):
                 if SIM_API_AVAILABLE:
-                    start_simulation(config, ui_callback)
-                st.session_state['sim_running'] = True
+                    try:
+                        from sim_api import resume_simulation
+                        resume_simulation()
+                    except Exception:
+                        pass
+                st.session_state['paused'] = False
                 st.success("Simulation resumed!")
                 st.rerun()
     
@@ -304,6 +402,8 @@ with col1:
         if SIM_API_AVAILABLE:
             reset_simulation()
         st.session_state['events'] = []
+        st.session_state['sim_running'] = False
+        st.session_state['paused'] = False
         # Clear cached visualization state
         if 'last_blocks' in st.session_state:
             del st.session_state['last_blocks']
@@ -311,6 +411,20 @@ with col1:
             del st.session_state['last_fork_tree']
         st.success("Blockchain and events cleared!")
         st.rerun()
+
+    # Submit new data to miners while running
+    if st.session_state['sim_running']:
+        col_sd1, col_sd2 = st.columns([3,1])
+        with col_sd2:
+            if st.button("📤 Submit Data To Miners"):
+                if SIM_API_AVAILABLE:
+                    try:
+                        submit_data(block_data)
+                        st.success("Data submitted to miners")
+                    except Exception:
+                        st.warning("Could not submit data")
+                else:
+                    st.info("Mock: data submitted")
     
     # Miner rates expander
     with st.expander("Miner Rates (Hash/s)", expanded=False):
@@ -339,7 +453,7 @@ with col2:
 
 
     st.markdown("**Metrics**")
-    metrics_col1, metrics_col2 = st.columns(2)
+    metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4)
     
     with metrics_col1:
         # Prefer authoritative count from sim API when available
@@ -366,27 +480,137 @@ with col2:
                 stats = get_stats()
                 if stats and 'difficulty' in stats:
                     current_difficulty = stats['difficulty']
+                    # Removed accidental f-string snippet
             except Exception:
+                # Keep UI difficulty if stats retrieval fails
                 pass
-        st.metric("Current Difficulty", current_difficulty)
+    avg_bt = None
+    fork_rate = 0.0
+    net_ms_display = st.session_state.get('network_delay_ms', 100)
+    if SIM_API_AVAILABLE:
+        try:
+            stats = get_stats()
+            avg_bt = stats.get('avg_block_time')
+            fork_rate = stats.get('fork_rate', 0.0)
+            net_ms_display = stats.get('network_delay_ms', net_ms_display)
+        except Exception:
+            pass
+    with metrics_col3:
+        st.metric("Avg Block Time (s)", f"{avg_bt:.2f}" if avg_bt else "—")
+    with metrics_col4:
+        st.metric("Fork/Stale Rate", f"{fork_rate*100:.1f}%")
 
     st.subheader(" Visualization")
     
-    # Block display area with scroll
-    st.markdown("**Blocks**")
-    block_container = st.container()
-    with block_container:
-        block_area = st.empty()
+    # Tabs: Overview (blocks + calculator) and Graph
+    tab_overview, tab_graph = st.tabs(["Overview", "Graph"])
     
-    # 2D Block visualization area
-    st.markdown("**Blockchain**")
-    block_map_area = st.empty()
+    # Block display area with scroll in Overview tab
+    with tab_overview:
+        st.markdown("**Blocks**")
+        block_container = st.container()
+        with block_container:
+            block_area = st.empty()
+    
+    # 2D Block visualization area in Graph tab with controls
+    with tab_graph:
+        st.markdown("**Blockchain**")
+        ctrl1, ctrl2, ctrl3, ctrl4, ctrl5, ctrl6, ctrl7 = st.columns([1,1,1,1,1,1,1])
+        with ctrl1:
+            st.session_state['graph_x_gap'] = st.slider("X gap", 80, 240, st.session_state.get('graph_x_gap', 140))
+        with ctrl2:
+            st.session_state['graph_y_gap'] = st.slider("Y gap", 60, 200, st.session_state.get('graph_y_gap', 90))
+        with ctrl3:
+            st.session_state['graph_node_radius'] = st.slider("Node size", 8, 28, st.session_state.get('graph_node_radius', 16))
+        with ctrl4:
+            st.session_state['graph_curved'] = st.checkbox("Curved connectors", value=st.session_state.get('graph_curved', False))
+        with ctrl5:
+            st.session_state['graph_show_labels'] = st.checkbox("Show labels", value=st.session_state.get('graph_show_labels', True))
+        with ctrl6:
+            st.session_state['graph_show_grid'] = st.checkbox("Show grid", value=st.session_state.get('graph_show_grid', True))
+        with ctrl7:
+            st.session_state['graph_zoom'] = st.slider("Zoom", 0.5, 2.0, float(st.session_state.get('graph_zoom', 1.0)))
+        # Theme and coloring
+        theme_col, miner_col = st.columns([1,1])
+        with theme_col:
+            st.session_state['graph_theme'] = st.selectbox("Theme", options=["light","dark"], index=(0 if st.session_state.get('graph_theme','light')=='light' else 1))
+        with miner_col:
+            st.session_state['graph_color_by_miner'] = st.checkbox("Color by miner", value=st.session_state.get('graph_color_by_miner', False))
+        block_map_area = st.empty()
+
+    # Manual PoW calculator (educational) inside Overview tab
+    with tab_overview:
+        st.markdown("**Manual PoW Calculator**")
+        calc_col1, calc_col2, calc_col3 = st.columns([2,1,1])
+        with calc_col1:
+            calc_message = st.text_input(
+                "Message to hash",
+                value=st.session_state.get('calc_message', 'Demo Message'),
+                key='calc_message_input'
+            )
+            st.session_state['calc_message'] = calc_message
+        with calc_col2:
+            calc_difficulty = st.slider(
+                "Calc difficulty",
+                min_value=0, max_value=8, value=st.session_state.get('calc_difficulty', difficulty), key='calc_difficulty_slider')
+            st.session_state['calc_difficulty'] = calc_difficulty
+        with calc_col3:
+            run_calc = st.button("🔍 Find Nonce")
+
+    calc_result_area = st.empty()
+    if run_calc:
+        # Perform a bounded PoW search to visualize hashing
+        try:
+            from utils.hash_utils import compute_block_hash, hash_meets_difficulty
+            import time as _t, random as _r
+            start_ts = _t.time()
+            prev_hash_demo = '0'*64
+            height_demo = 1
+            attempts = 0
+            max_attempts = 200000  # safety bound
+            nonce = _r.randint(0, 2**32-1)
+            found = None
+            # Try quickly; yield UI every 5000 attempts
+            while attempts < max_attempts:
+                h = compute_block_hash(prev_hash_demo, height_demo, _t.time(), calc_message, nonce, 'manual')
+                attempts += 1
+                if hash_meets_difficulty(h, calc_difficulty):
+                    found = (nonce, h)
+                    break
+                nonce = (nonce + 1) & 0xFFFFFFFF
+                if attempts % 5000 == 0:
+                    calc_result_area.info(f"Attempts: {attempts}")
+            duration = _t.time() - start_ts
+            if found:
+                n, hval = found
+                calc_result_area.success(f"Found nonce {n} in {attempts} attempts ({duration:.2f}s). Hash: {str(hval)[:16]}…")
+            else:
+                calc_result_area.warning(f"No valid nonce within {max_attempts} attempts. Try lowering difficulty.")
+        except Exception as e:
+            calc_result_area.error(f"Calculator error: {e}")
+
+    # Simple block times chart (last 20)
+    try:
+        if SIM_API_AVAILABLE:
+            stats = get_stats()
+            rbt = stats.get('recent_block_times') or []
+            if rbt:
+                st.line_chart(rbt, height=120)
+    except Exception:
+        pass
     
 
 # Events are processed earlier at startup via `process_event_queue()`
 
 # Update displays
-if st.session_state['sim_running']:
+stats_paused = False
+if SIM_API_AVAILABLE:
+    try:
+        stats_paused = get_stats().get('paused', False)
+    except Exception:
+        pass
+
+if st.session_state['sim_running'] and not st.session_state['paused'] and not stats_paused:
     # Update block area - get blocks from stats (authoritative source)
     blocks = []
     
@@ -419,8 +643,16 @@ if st.session_state['sim_running']:
     try:
         stats = get_stats()
         if stats and 'fork_tree' in stats and stats['fork_tree'] and stats['fork_tree'].get('genesis'):
-            block_map_html = _render_2d_blocks(stats['fork_tree'])
-            block_map_area.markdown(block_map_html, unsafe_allow_html=True)
+            svg = _render_2d_blocks(stats['fork_tree'])
+            centered_html = f"""
+            <div style='display:flex; justify-content:center; align-items:flex-start; padding:12px;'>
+                <div style='width:100%; max-width:1400px; height:800px; overflow:auto; border:1px solid #e5e7eb; border-radius:8px; background:#ffffff;'>
+                    {svg}
+                </div>
+            </div>
+            """
+            import streamlit.components.v1 as components
+            components.html(centered_html, height=820, scrolling=True)
             # Store in session state for paused view
             st.session_state['last_fork_tree'] = stats['fork_tree']
         else:
@@ -428,7 +660,7 @@ if st.session_state['sim_running']:
     except Exception as e:
         block_map_area.info("Blocks loading...")
     
-    # Auto-refresh every 2 seconds
+    # Auto-refresh every 2 seconds.
     time.sleep(2)
     st.rerun()
 else:
@@ -442,8 +674,16 @@ else:
     
     # Display last known blockchain map
     if 'last_fork_tree' in st.session_state and st.session_state['last_fork_tree']:
-        block_map_html = _render_2d_blocks(st.session_state['last_fork_tree'])
-        block_map_area.markdown(block_map_html, unsafe_allow_html=True)
+        svg = _render_2d_blocks(st.session_state['last_fork_tree'])
+        centered_html = f"""
+        <div style='display:flex; justify-content:center; align-items:flex-start; padding:12px;'>
+            <div style='width:100%; max-width:1400px; height:800px; overflow:auto; border:1px solid #e5e7eb; border-radius:8px; background:#ffffff;'>
+                {svg}
+            </div>
+        </div>
+        """
+        import streamlit.components.v1 as components
+        components.html(centered_html, height=820, scrolling=True)
     else:
         block_map_area.info("No blocks to display")
 
