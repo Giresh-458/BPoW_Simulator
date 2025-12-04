@@ -44,6 +44,28 @@ if 'paused' not in st.session_state:
 if 'miner_rates' not in st.session_state:
     st.session_state['miner_rates'] = {}
 
+# Safer default UI settings to reduce load
+defaults = {
+    'graph_enabled': False,
+    'graph_render_every_n': 4,
+    'auto_refresh_secs': 3,
+    'graph_max_levels': 40,
+    'graph_curved': True,
+    'graph_color_by_miner': True,
+    'graph_show_labels': True,
+    'graph_show_grid': True,
+    'graph_x_gap': 140,
+    'graph_y_gap': 90,
+    'graph_node_radius': 16,
+    'graph_zoom': 1.0,
+    'graph_theme': 'light',
+    'graph_node_budget': 600,
+    'graph_min_blocks_to_render': 12
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
 def ui_callback(event: Dict[str, Any]) -> None:
     """
     Thread-safe callback function to handle simulation events.
@@ -393,6 +415,10 @@ with col1:
                 # Cloud-friendly caps
                 num_miners = min(num_miners, 6)
                 miner_rates = {m: min(5000.0, float(r)) for m, r in miner_rates.items()}
+            else:
+                # Local safety caps unless explicitly in stress mode
+                num_miners = min(num_miners, 8)
+                miner_rates = {m: min(8000.0, float(r)) for m, r in miner_rates.items()}
             
             config = {
                 'num_miners': num_miners,
@@ -684,7 +710,10 @@ if st.session_state['sim_running'] and not st.session_state['paused']:
 
     try:
         if st.session_state.get('graph_enabled', False):
-            stats = get_stats()
+            try:
+                stats = get_stats()
+            except Exception:
+                stats = None
             if stats and 'fork_tree' in stats and stats['fork_tree'] and stats['fork_tree'].get('genesis'):
                 # Defer initial heavy render until enough blocks exist
                 accepted_blocks = stats.get('accepted_count') or 0
