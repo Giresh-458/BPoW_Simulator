@@ -82,6 +82,7 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
         head = _blockchain.get_latest_block()
         prev_hash = head.hash if head else 0
         height = head.height if head else 0
+        # Stagger miner startups slightly to avoid initial burst
         for miner in _miners:
             miner.start(
                 on_block_found=_on_block_found,
@@ -90,6 +91,7 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
                 difficulty=config.get('difficulty', 4),
                 data=config.get('data', 'Hello Blockchain!')
             )
+            time.sleep(0.02)
 
         # Configure network delay from UI config (milliseconds)
         try:
@@ -406,8 +408,11 @@ def _on_block_found(block) -> None:
         
         # Schedule delayed acceptance via a callback
         # (in a real network, blocks would propagate over the network with latency)
+        # Add small jitter to delay to avoid synchronized accepts
+        jitter = min(0.2, max(0.0, network_delay * 0.2))
+        delay = network_delay + (jitter * (0.5 - (time.time() % 1)))
         threading.Timer(
-            network_delay,
+            max(0.0, delay),
             lambda: _accept_block_delayed(block, prev_head, discovery_event)
         ).start()
 

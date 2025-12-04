@@ -89,6 +89,15 @@ def _render_2d_blocks(fork_tree: Dict[str, Any]) -> str:
 
     traverse(root)
 
+    # Limit to recent levels to cap drawn nodes for performance
+    max_levels = int(st.session_state.get('graph_max_levels', 80))
+    if levels:
+        all_heights = sorted(levels.keys())
+        max_h = max(all_heights)
+        min_h = max(0, max_h - max_levels + 1)
+        # Drop older levels outside the window
+        levels = {h: levels[h] for h in all_heights if h >= min_h}
+
     # Layout parameters (read from session for user-tunable layout)
     # Vertical layout: Y = height (top to bottom), X = sibling order (left to right)
     x_gap = int(st.session_state.get('graph_x_gap', 140))
@@ -96,7 +105,7 @@ def _render_2d_blocks(fork_tree: Dict[str, Any]) -> str:
     radius = int(st.session_state.get('graph_node_radius', 16))
     zoom = float(st.session_state.get('graph_zoom', 1.0))
     theme = st.session_state.get('graph_theme', 'light')
-    color_by_miner = bool(st.session_state.get('graph_color_by_miner', False))
+    color_by_miner = bool(st.session_state.get('graph_color_by_miner', True))
     padding = 40
 
     max_height = max(levels.keys()) if levels else 0
@@ -164,7 +173,7 @@ def _render_2d_blocks(fork_tree: Dict[str, Any]) -> str:
                 if child_pos and parent_pos:
                     x1, y1 = child_pos
                     x2, y2 = parent_pos
-                    if st.session_state.get('graph_curved', False):
+                    if st.session_state.get('graph_curved', True):
                         # Gentle vertical curve from parent to child
                         my = (y1 + y2) / 2
                         lines.append(
@@ -213,7 +222,9 @@ def _render_2d_blocks(fork_tree: Dict[str, Any]) -> str:
 
     # Optional light grid background to aid readability
     grid = []
-    if st.session_state.get('graph_show_grid', True):
+    # In simple mode, hide grid regardless of toggle
+    simple_mode = bool(st.session_state.get('graph_simple_mode', False))
+    if st.session_state.get('graph_show_grid', True) and not simple_mode:
         for h in range(max_height + 1):
             y = padding + h * y_gap
             grid.append(f'<line x1="0" y1="{y}" x2="{width}" y2="{y}" stroke="{grid_color}" stroke-width="1" />')
@@ -336,12 +347,12 @@ with col1:
 
             # Apply Fork Stress Mode overrides
             if st.session_state.get('fork_stress', False):
-                # Use 8 miners at ~10k H/s, lower difficulty, higher network delay
-                num_miners = max(num_miners, 8)
+                # Softer stress settings for responsiveness
+                num_miners = max(num_miners, 6)
                 difficulty = 2
-                net_delay_ms = 600
-                # Normalize miners to ~10k H/s
-                miner_rates = {f"miner_{i+1}": 10000 for i in range(num_miners)}
+                net_delay_ms = 500
+                # Normalize miners to ~8k H/s
+                miner_rates = {f"miner_{i+1}": 8000 for i in range(num_miners)}
             
             config = {
                 'num_miners': num_miners,
@@ -405,19 +416,7 @@ with col1:
         st.success("Blockchain and events cleared!")
         st.rerun()
 
-    # Submit new data to miners while running
-    if st.session_state['sim_running']:
-        col_sd1, col_sd2 = st.columns([3,1])
-        with col_sd2:
-            if st.button("📤 Submit Data To Miners"):
-                if SIM_API_AVAILABLE:
-                    try:
-                        submit_data(block_data)
-                        st.success("Data submitted to miners")
-                    except Exception:
-                        st.warning("Could not submit data")
-                else:
-                    st.info("Mock: data submitted")
+    # Removed "Submit Data To Miners" control to simplify UI
     
     # Miner rates expander
     with st.expander("Miner Rates (Hash/s)", expanded=False):
@@ -516,7 +515,7 @@ with col2:
         with ctrl3:
             st.session_state['graph_node_radius'] = st.slider("Node size", 8, 28, st.session_state.get('graph_node_radius', 16))
         with ctrl4:
-            st.session_state['graph_curved'] = st.checkbox("Curved connectors", value=st.session_state.get('graph_curved', False))
+            st.session_state['graph_curved'] = st.checkbox("Curved connectors", value=st.session_state.get('graph_curved', True))
         with ctrl5:
             st.session_state['graph_show_labels'] = st.checkbox("Show labels", value=st.session_state.get('graph_show_labels', True))
         with ctrl6:
@@ -528,7 +527,20 @@ with col2:
         with theme_col:
             st.session_state['graph_theme'] = st.selectbox("Theme", options=["light","dark"], index=(0 if st.session_state.get('graph_theme','light')=='light' else 1))
         with miner_col:
-            st.session_state['graph_color_by_miner'] = st.checkbox("Color by miner", value=st.session_state.get('graph_color_by_miner', False))
+            st.session_state['graph_color_by_miner'] = st.checkbox("Color by miner", value=st.session_state.get('graph_color_by_miner', True))
+        # Additional performance controls
+        perf1, perf2 = st.columns([1,1])
+        with perf1:
+            st.session_state['graph_max_levels'] = st.slider("Max levels shown", 10, 200, int(st.session_state.get('graph_max_levels', 80)), help="Limit recent heights drawn to keep rendering light.")
+        with perf2:
+            st.session_state['auto_refresh_secs'] = st.slider("Auto-refresh (sec)", 2, 10, int(st.session_state.get('auto_refresh_secs', 2)), help="Lower refresh rate to reduce UI workload.")
+        perf3, perf4 = st.columns([1,1])
+        with perf3:
+            st.session_state['graph_render_every_n'] = st.slider("Render every Nth refresh", 1, 10, int(st.session_state.get('graph_render_every_n', 2)), help="Only draw graph every Nth UI update.")
+        with perf4:
+            st.session_state['graph_simple_mode'] = st.checkbox("Simple graph mode", value=st.session_state.get('graph_simple_mode', False), help="Use simpler styling for heavy loads.")
+        # Heavy render toggle to prevent UI freezes
+        st.session_state['graph_enabled'] = st.checkbox("Render graph", value=st.session_state.get('graph_enabled', False), help="Enable to render the SVG graph. Disable if UI feels sluggish.")
         block_map_area = st.empty()
 
     # Manual PoW calculator (educational) inside Overview tab
@@ -626,28 +638,39 @@ if st.session_state['sim_running'] and not st.session_state['paused']:
         block_area.info("No blocks mined yet...")
     
     # Update 2D block visualization
+    # Initialize render cycle counter
+    if 'graph_render_counter' not in st.session_state:
+        st.session_state['graph_render_counter'] = 0
+
     try:
-        stats = get_stats()
-        if stats and 'fork_tree' in stats and stats['fork_tree'] and stats['fork_tree'].get('genesis'):
-            svg = _render_2d_blocks(stats['fork_tree'])
-            centered_html = f"""
-            <div style='display:flex; justify-content:center; align-items:flex-start; padding:12px;'>
-                <div style='width:100%; max-width:1400px; height:800px; overflow:auto; border:1px solid #e5e7eb; border-radius:8px; background:#ffffff;'>
-                    {svg}
-                </div>
-            </div>
-            """
-            import streamlit.components.v1 as components
-            components.html(centered_html, height=820, scrolling=True)
-            # Store in session state for paused view
-            st.session_state['last_fork_tree'] = stats['fork_tree']
+        if st.session_state.get('graph_enabled', False):
+            stats = get_stats()
+            if stats and 'fork_tree' in stats and stats['fork_tree'] and stats['fork_tree'].get('genesis'):
+                # Only render every Nth refresh to reduce load
+                st.session_state['graph_render_counter'] += 1
+                n = int(st.session_state.get('graph_render_every_n', 2))
+                if st.session_state['graph_render_counter'] % max(1, n) == 0:
+                    svg = _render_2d_blocks(stats['fork_tree'])
+                    centered_html = f"""
+                    <div style='display:flex; justify-content:center; align-items:flex-start; padding:12px;'>
+                        <div style='width:100%; max-width:1400px; height:800px; overflow:auto; border:1px solid #e5e7eb; border-radius:8px; background:#ffffff;'>
+                            {svg}
+                        </div>
+                    </div>
+                    """
+                    import streamlit.components.v1 as components
+                    components.html(centered_html, height=820, scrolling=True)
+                    # Store in session state for paused view
+                    st.session_state['last_fork_tree'] = stats['fork_tree']
+            else:
+                block_map_area.info("Waiting for blocks...")
         else:
-            block_map_area.info("Waiting for blocks...")
+            block_map_area.info("Graph rendering disabled")
     except Exception as e:
         block_map_area.info("Blocks loading...")
     
-    # Auto-refresh every 2 seconds.
-    time.sleep(2)
+    # Auto-refresh using configured cadence.
+    time.sleep(int(st.session_state.get('auto_refresh_secs', 2)))
     st.rerun()
 else:
     # Paused - show last known state
