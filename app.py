@@ -10,6 +10,7 @@ import json
 import queue
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+import os
 
 # Import simulation API
 try:
@@ -30,6 +31,9 @@ except ImportError:
     def render_blocks(blocks: list) -> str:
         return "<div>No blocks</div>"
 
+# Global event queue for thread-safe communication (avoid Streamlit context in threads)
+EVENT_QUEUE = queue.Queue()
+
 # Initialize session state
 if 'events' not in st.session_state:
     st.session_state['events'] = []
@@ -37,8 +41,6 @@ if 'sim_running' not in st.session_state:
     st.session_state['sim_running'] = False
 if 'paused' not in st.session_state:
     st.session_state['paused'] = False
-if 'event_queue' not in st.session_state:
-    st.session_state['event_queue'] = queue.Queue()
 if 'miner_rates' not in st.session_state:
     st.session_state['miner_rates'] = {}
 
@@ -47,15 +49,17 @@ def ui_callback(event: Dict[str, Any]) -> None:
     Thread-safe callback function to handle simulation events.
     Called from mining threads - uses queue instead of direct session_state access.
     """
-    # Use queue for thread-safe communication
-    if 'event_queue' in st.session_state:
-        st.session_state['event_queue'].put(event)
+    # Use global queue for thread-safe communication; avoid Streamlit API in worker threads
+    try:
+        EVENT_QUEUE.put(event)
+    except Exception:
+        pass
 
 def process_event_queue():
     """Process events from the queue into session state."""
     try:
-        while not st.session_state['event_queue'].empty():
-            event = st.session_state['event_queue'].get_nowait()
+        while not EVENT_QUEUE.empty():
+            event = EVENT_QUEUE.get_nowait()
             st.session_state['events'].append(event)
 
             # Keep only recent events to prevent memory issues
