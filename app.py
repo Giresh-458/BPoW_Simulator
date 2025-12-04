@@ -102,6 +102,13 @@ def _render_2d_blocks(fork_tree: Dict[str, Any]) -> str:
         # Drop older levels outside the window
         levels = {h: levels[h] for h in all_heights if h >= min_h}
 
+    # Hard node budget cap: auto-simplify when too many nodes
+    node_budget = int(st.session_state.get('graph_node_budget', 600))
+    total_nodes = sum(len(v) for v in levels.values())
+    if total_nodes > node_budget:
+        st.session_state['graph_show_labels'] = False
+        st.session_state['graph_show_grid'] = False
+
     # Layout parameters (read from session for user-tunable layout)
     # Vertical layout: Y = height (top to bottom), X = sibling order (left to right)
     x_gap = int(st.session_state.get('graph_x_gap', 140))
@@ -177,7 +184,18 @@ def _render_2d_blocks(fork_tree: Dict[str, Any]) -> str:
                 if child_pos and parent_pos:
                     x1, y1 = child_pos
                     x2, y2 = parent_pos
-                    if st.session_state.get('graph_curved', True):
+                    # In Cloud Mode with heavy load, prefer orthogonal connectors
+                    use_curved = bool(st.session_state.get('graph_curved', True))
+                    if st.session_state.get('cloud_mode', False):
+                        # Recompute total_nodes and compare to budget
+                        try:
+                            node_budget = int(st.session_state.get('graph_node_budget', 600))
+                            total_nodes = sum(len(v) for v in levels.values())
+                            if total_nodes > node_budget:
+                                use_curved = False
+                        except Exception:
+                            pass
+                    if use_curved:
                         # Gentle vertical curve from parent to child
                         my = (y1 + y2) / 2
                         lines.append(
@@ -668,6 +686,11 @@ if st.session_state['sim_running'] and not st.session_state['paused']:
         if st.session_state.get('graph_enabled', False):
             stats = get_stats()
             if stats and 'fork_tree' in stats and stats['fork_tree'] and stats['fork_tree'].get('genesis'):
+                # Defer initial heavy render until enough blocks exist
+                accepted_blocks = stats.get('accepted_count') or 0
+                if accepted_blocks < int(st.session_state.get('graph_min_blocks_to_render', 12)):
+                    block_map_area.info("Graph will render after more blocks are mined...")
+                else:
                 # Only render every Nth refresh to reduce load
                 st.session_state['graph_render_counter'] += 1
                 n = int(st.session_state.get('graph_render_every_n', 2))
