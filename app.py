@@ -691,22 +691,22 @@ if st.session_state['sim_running'] and not st.session_state['paused']:
                 if accepted_blocks < int(st.session_state.get('graph_min_blocks_to_render', 12)):
                     block_map_area.info("Graph will render after more blocks are mined...")
                 else:
-                # Only render every Nth refresh to reduce load
-                st.session_state['graph_render_counter'] += 1
-                n = int(st.session_state.get('graph_render_every_n', 2))
-                if st.session_state['graph_render_counter'] % max(1, n) == 0:
-                    svg = _render_2d_blocks(stats['fork_tree'])
-                    centered_html = f"""
-                    <div style='display:flex; justify-content:center; align-items:flex-start; padding:12px;'>
-                        <div style='width:100%; max-width:1400px; height:800px; overflow:auto; border:1px solid #e5e7eb; border-radius:8px; background:#ffffff;'>
-                            {svg}
+                    # Only render every Nth refresh to reduce load
+                    st.session_state['graph_render_counter'] += 1
+                    n = int(st.session_state.get('graph_render_every_n', 2))
+                    if st.session_state['graph_render_counter'] % max(1, n) == 0:
+                        svg = _render_2d_blocks(stats['fork_tree'])
+                        centered_html = f"""
+                        <div style='display:flex; justify-content:center; align-items:flex-start; padding:12px;'>
+                            <div style='width:100%; max-width:1400px; height:800px; overflow:auto; border:1px solid #e5e7eb; border-radius:8px; background:#ffffff;'>
+                                {svg}
+                            </div>
                         </div>
-                    </div>
-                    """
-                    import streamlit.components.v1 as components
-                    components.html(centered_html, height=820, scrolling=True)
-                    # Store in session state for paused view
-                    st.session_state['last_fork_tree'] = stats['fork_tree']
+                        """
+                        import streamlit.components.v1 as components
+                        components.html(centered_html, height=820, scrolling=True)
+                        # Store in session state for paused view
+                        st.session_state['last_fork_tree'] = stats['fork_tree']
             else:
                 block_map_area.info("Waiting for blocks...")
         else:
