@@ -39,7 +39,7 @@ class DifficultyController:
         # Use a conservative adjustment step to avoid oscillation.
         # If blocks are significantly faster than target -> increase difficulty by 1.
         if avg_block_time < self.target_block_time * 0.9:
-            self.current_difficulty = min(self.current_difficulty + 1, 32)
+            self.current_difficulty = min(self.current_difficulty + 1, 8)  # Cap at 8
             print("Increasing difficulty to", self.current_difficulty)
         # If blocks are significantly slower than target -> decrease difficulty by 1.
         elif avg_block_time > self.target_block_time * 1.1:

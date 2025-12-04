@@ -53,8 +53,11 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
         _difficulty_controller = DifficultyController()
         _ui_callback = ui_callback
         
-        # Configure blockchain
-        _blockchain.set_difficulty(config.get('difficulty', 4))
+        # Configure blockchain with provided difficulty
+        new_difficulty = config.get('difficulty', 4)
+        _blockchain.set_difficulty(new_difficulty)
+        # Sync difficulty controller with blockchain
+        _difficulty_controller.current_difficulty = new_difficulty
         
         # Create miners with configured hash rates
         num_miners = config.get('num_miners', 3)
@@ -148,6 +151,28 @@ def stop_simulation() -> None:
                 'message': 'Simulation stopped',
                 'type': 'simulation_stop'
             })
+
+def reset_simulation() -> None:
+    """Reset the blockchain and all simulation state."""
+    global _blockchain, _miners, _network, _difficulty_controller, _simulation_running, _pruning_active
+    
+    with _simulation_lock:
+        # Stop simulation if running
+        if _simulation_running:
+            _pruning_active = False
+            for miner in _miners:
+                miner.stop()
+            if _network:
+                _network.stop()
+            _simulation_running = False
+        
+        # Reset all global state
+        _blockchain = None
+        _miners = []
+        _network = None
+        _difficulty_controller = None
+        
+        print("[RESET] Blockchain and simulation state cleared")
 
 def set_miner_rate(miner_id: str, rate: float) -> None:
     """
@@ -417,14 +442,17 @@ def _process_block_acceptance(block, added, prev_head, discovery_event) -> None:
 
 def _pruning_loop() -> None:
     """
-    Background thread that periodically prunes old fork branches.
+    Background thread that periodically prunes old fork branches and adjusts difficulty if mining is too slow.
     Runs every 5 seconds while simulation is active.
     """
-    global _pruning_active, _blockchain
+    global _pruning_active, _blockchain, _difficulty_controller, _miners
+    
+    last_block_height = 0
+    time_at_last_block = time.time()
     
     while _pruning_active:
         try:
-            time.sleep(5)  # Prune every 5 seconds
+            time.sleep(5)  # Check every 5 seconds
             
             if _blockchain and _simulation_running:
                 with _simulation_lock:
@@ -445,6 +473,48 @@ def _pruning_loop() -> None:
                                 })
                             except Exception:
                                 pass
+                    
+                    # Check if difficulty should be decreased due to timeout
+                    current_height = _blockchain.get_block_count()
+                    current_time = time.time()
+                    
+                    if current_height > last_block_height:
+                        # New block mined, reset timer
+                        last_block_height = current_height
+                        time_at_last_block = current_time
+                    else:
+                        # No new block, check if we've waited too long
+                        time_since_last_block = current_time - time_at_last_block
+                        
+                        # If no block for 15 seconds, decrease difficulty by 1
+                        if time_since_last_block > 15 and _difficulty_controller:
+                            current_diff = _difficulty_controller.get_current_difficulty()
+                            if current_diff > 1:
+                                new_difficulty = current_diff - 1  # Drop by exactly 1
+                                _difficulty_controller.current_difficulty = new_difficulty
+                                _blockchain.set_difficulty(new_difficulty)
+                                
+                                # Update miners' difficulty
+                                for miner in _miners:
+                                    miner.difficulty = new_difficulty
+                                
+                                # Broadcast new work with updated difficulty
+                                _broadcast_new_work_to_miners()
+                                
+                                print(f"[TIMEOUT] No block for {time_since_last_block:.1f}s, decreasing difficulty to {new_difficulty}")
+                                
+                                # Notify UI
+                                if _event_queue:
+                                    _event_queue.put({
+                                        'timestamp': time.time(),
+                                        'message': f'Difficulty decreased to {new_difficulty} due to timeout',
+                                        'type': 'difficulty_update',
+                                        'difficulty': new_difficulty
+                                    })
+                                
+                                # Reset timer after adjustment
+                                time_at_last_block = current_time
+                                
         except Exception as e:
             print(f"[PRUNING ERROR] {e}")
             pass

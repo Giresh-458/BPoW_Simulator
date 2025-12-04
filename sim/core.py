@@ -131,8 +131,10 @@ class Blockchain:
                     self._main_chain = new_main
                     return True
 
-            # If block does not extend the main chain tip to a longer chain, it's a fork/orphan — treat as stale for now
+            # If block does not extend the main chain tip to a longer chain, it's a fork/orphan
+            # Still keep it in _blocks for visualization, just mark as not accepted
             block.accepted = False
+            # Block is already in _blocks (added at line 96), so it will appear in fork tree
             return False
     
     def validate_block(self, block: Block) -> bool:

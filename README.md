@@ -77,16 +77,3 @@ The UI expects events from `sim_api` in the following format:
     "timestamp": float
 }
 ```
-
-### Important Note
-
-**Do not modify `sim/` or `sim_api.py` — simulation core is owned by Person B.**
-
-The UI is designed to work with mock data when `sim_api` is not available, allowing for independent development and testing of the user interface.
-
-## TODO
-
-- Implement full mining logic
-- Add network latency simulation
-- Implement difficulty adjustment algorithm
-- Add comprehensive testing

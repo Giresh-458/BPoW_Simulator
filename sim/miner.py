@@ -89,7 +89,7 @@ class Miner:
         `on_block_found(block)` and then continue (the simulation will
         broadcast new work which `set_work` will apply).
         """
-        cycle_time = 0.1
+        cycle_time = 0.05  # Reduced from 0.1 to 0.05 for more responsive mining
 
         while self.is_mining:
             # Snapshot work atomically

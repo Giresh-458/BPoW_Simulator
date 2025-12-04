@@ -59,18 +59,19 @@ def hash_meets_difficulty(block_hash: int, difficulty: int) -> bool:
     Higher difficulty = harder to mine (lower threshold)
     
     Difficulty mapping (for 1 crore hash space):
-    - 0: hash < 5,000,000 (50% chance)
-    - 1: hash < 2,500,000 (25% chance)
-    - 2: hash < 1,250,000 (12.5% chance)
-    - 3: hash < 625,000 (6.25% chance)
-    - 4: hash < 312,500 (3.125% chance)
-    - 5: hash < 156,250 (1.56% chance)
-    - 6: hash < 78,125 (0.78% chance)
-    - 7: hash < 39,062 (0.39% chance)
+    - 0: hash < 10,000,000 (100% chance - always valid)
+    - 1: hash < 1,000,000 (10% chance)
+    - 2: hash < 100,000 (1% chance)
+    - 3: hash < 10,000 (0.1% chance)
+    - 4: hash < 1,000 (0.01% chance)
+    - 5: hash < 100 (0.001% chance)
+    - 6: hash < 10 (0.0001% chance)
+    - 7: hash < 5 (0.00005% chance)
+    - 8: hash < 1 (0.00001% chance)
     
     Args:
         block_hash: Hash value (integer 0-9999999)
-        difficulty: Difficulty level (0-10+)
+        difficulty: Difficulty level (0-8)
     
     Returns:
         True if hash meets difficulty, False otherwise
@@ -83,7 +84,14 @@ def hash_meets_difficulty(block_hash: int, difficulty: int) -> bool:
             return False
     
     # Calculate threshold based on difficulty
-    # Each difficulty level halves the probability
-    threshold = 5000000 // (2 ** difficulty)
+    # Each difficulty level divides threshold by 10
+    if difficulty == 0:
+        threshold = 10000000  # 100% - always valid
+    elif difficulty <= 6:
+        threshold = 10 ** (7 - difficulty)  # 10^6, 10^5, 10^4, 10^3, 10^2, 10^1
+    elif difficulty == 7:
+        threshold = 5  # Extra hard
+    else:  # difficulty 8
+        threshold = 1  # Maximum difficulty
     
     return block_hash < threshold
