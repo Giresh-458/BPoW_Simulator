@@ -334,6 +334,20 @@ with col1:
         8: "Maximum (8 leading zeros)"
     }
     st.caption(f"Difficulty: {difficulty_descriptions.get(difficulty_value, 'Unknown')}")
+
+    # Cloud mode: safer defaults for Streamlit Cloud/hosted environments
+    cloud_env = bool(os.environ.get('STREAMLIT_CLOUD') or os.environ.get('STREAMLIT_SERVER_HEADLESS'))
+    st.session_state['cloud_mode'] = st.sidebar.checkbox("Cloud Mode (safer defaults)", value=st.session_state.get('cloud_mode', cloud_env))
+    if st.session_state['cloud_mode']:
+        # Preseed conservative defaults if not set
+        if 'graph_enabled' not in st.session_state:
+            st.session_state['graph_enabled'] = False
+        if 'graph_render_every_n' not in st.session_state:
+            st.session_state['graph_render_every_n'] = 4
+        if 'auto_refresh_secs' not in st.session_state:
+            st.session_state['auto_refresh_secs'] = 3
+        if 'graph_max_levels' not in st.session_state:
+            st.session_state['graph_max_levels'] = 40
     
     # Control buttons
     col_start, col_stop = st.columns(2)
@@ -357,6 +371,10 @@ with col1:
                 net_delay_ms = 500
                 # Normalize miners to ~8k H/s
                 miner_rates = {f"miner_{i+1}": 8000 for i in range(num_miners)}
+            elif st.session_state.get('cloud_mode', False):
+                # Cloud-friendly caps
+                num_miners = min(num_miners, 6)
+                miner_rates = {m: min(5000.0, float(r)) for m, r in miner_rates.items()}
             
             config = {
                 'num_miners': num_miners,

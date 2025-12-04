@@ -50,9 +50,25 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
         # Initialize simulation components (reuse blockchain if it exists)
         if _blockchain is None:
             _blockchain = Blockchain()
-            print("\n[BLOCKCHAIN] New blockchain initialized")
+            if ui_callback:
+                try:
+                    ui_callback({
+                        'timestamp': time.time(),
+                        'type': 'log',
+                        'message': '[BLOCKCHAIN] New blockchain initialized'
+                    })
+                except Exception:
+                    pass
         else:
-            print(f"\n[BLOCKCHAIN] Resuming blockchain at height {_blockchain.get_block_count()})")
+            if ui_callback:
+                try:
+                    ui_callback({
+                        'timestamp': time.time(),
+                        'type': 'log',
+                        'message': f'[BLOCKCHAIN] Resuming blockchain at height {_blockchain.get_block_count()}'
+                    })
+                except Exception:
+                    pass
             
         _miners = []
         _network = Network()
@@ -73,7 +89,15 @@ def start_simulation(config: Dict[str, Any], ui_callback: Callable) -> None:
             hash_rate = miner_rates.get(miner_id, 500)  # Default 500 H/s for 1 crore hash space
             miner = Miner(miner_id, hash_rate=hash_rate)
             _miners.append(miner)
-            print(f"Created {miner_id} with hash rate: {hash_rate} H/s")
+            if ui_callback:
+                try:
+                    ui_callback({
+                        'timestamp': time.time(),
+                        'type': 'log',
+                        'message': f'Created {miner_id} with hash rate: {hash_rate} H/s'
+                    })
+                except Exception:
+                    pass
             
         # Start network
         _network.start()
@@ -375,7 +399,15 @@ def _on_block_found(block) -> None:
         prev_head = _blockchain.get_latest_block()
 
         # Announce that a block was found (discovery)
-        print(f"\n[MINING] [{block.miner_id}] Found block #{block.height} with hash {block.hash} (nonce: {block.nonce})")
+        if _ui_callback:
+            try:
+                _ui_callback({
+                    'timestamp': time.time(),
+                    'type': 'log',
+                    'message': f'[MINING] [{block.miner_id}] Found block #{block.height} with hash {block.hash} (nonce: {block.nonce})'
+                })
+            except Exception:
+                pass
         
         discovery_event = {
             'timestamp': time.time(),
@@ -448,7 +480,15 @@ def _process_block_acceptance(block, added, prev_head, discovery_event) -> None:
         discovery_event: The discovery event that was sent
     """
     if added:
-        print(f"[ACCEPTED] Block #{block.height} ACCEPTED by network (hash: {block.hash}, prev: {block.prev_hash})")
+        if _ui_callback:
+            try:
+                _ui_callback({
+                    'timestamp': time.time(),
+                    'type': 'log',
+                    'message': f'[ACCEPTED] Block #{block.height} ACCEPTED by network (hash: {block.hash}, prev: {block.prev_hash})'
+                })
+            except Exception:
+                pass
         accepted_event = discovery_event.copy()
         accepted_event['timestamp'] = time.time()
         accepted_event['message'] = f'Block #{block.height} accepted (by {block.miner_id})'
@@ -505,8 +545,15 @@ def _process_block_acceptance(block, added, prev_head, discovery_event) -> None:
         # 3. Invalid prev_hash (doesn't match current chain tip)
         # 4. Timestamp issues (too far in future, or not monotonic)
         # This is normal in PoW - miners sometimes work on outdated chain state.
-        print(f"[REJECTED] Block #{block.height} REJECTED/STALE from {block.miner_id} (hash: {block.hash})")
-        print(f"           Reason: Block doesn't meet validation (likely mining on old chain head)")
+        if _ui_callback:
+            try:
+                _ui_callback({
+                    'timestamp': time.time(),
+                    'type': 'log',
+                    'message': f'[REJECTED] Block #{block.height} REJECTED/STALE from {block.miner_id} (hash: {block.hash})\n           Reason: Block doesn\'t meet validation (likely mining on old chain head)'
+                })
+            except Exception:
+                pass
         stale_event = discovery_event.copy()
         stale_event['timestamp'] = time.time()
         stale_event['message'] = f'Block #{block.height} from {block.miner_id} is stale/rejected'
@@ -568,7 +615,15 @@ def _pruning_loop() -> None:
                     pruned_count = _blockchain.prune_old_branches(max_depth_behind=10)
                     
                     if pruned_count > 0:
-                        print(f"[PRUNING] Removed {pruned_count} old fork block(s)")
+                        if _ui_callback:
+                            try:
+                                _ui_callback({
+                                    'timestamp': time.time(),
+                                    'type': 'log',
+                                    'message': f'[PRUNING] Removed {pruned_count} old fork block(s)'
+                                })
+                            except Exception:
+                                pass
                         
                         # Optionally notify UI about pruning
                         if _ui_callback:
@@ -609,7 +664,15 @@ def _pruning_loop() -> None:
                                 # Broadcast new work with updated difficulty
                                 _broadcast_new_work_to_miners()
                                 
-                                print(f"[TIMEOUT] No block for {time_since_last_block:.1f}s, decreasing difficulty to {new_difficulty}")
+                                if _ui_callback:
+                                    try:
+                                        _ui_callback({
+                                            'timestamp': time.time(),
+                                            'type': 'log',
+                                            'message': f'[TIMEOUT] No block for {time_since_last_block:.1f}s, decreasing difficulty to {new_difficulty}'
+                                        })
+                                    except Exception:
+                                        pass
                                 
                                 # Notify UI
                                 if _event_queue:
