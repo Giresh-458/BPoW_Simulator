@@ -364,15 +364,8 @@ with col1:
     
     with col_stop:
         # Pause/Resume controls (true pause without stopping components)
-        # Determine paused/running via backend if available
-        backend_paused = None
-        if SIM_API_AVAILABLE:
-            try:
-                stats = get_stats()
-                backend_paused = bool(stats.get('paused', False))
-            except Exception:
-                backend_paused = None
-        ui_paused = st.session_state['paused'] if backend_paused is None else backend_paused
+        # Use UI flag for pause state to avoid stale backend values
+        ui_paused = st.session_state['paused']
 
         if st.session_state['sim_running'] and not ui_paused:
             if st.button("⏸️ Pause Simulation"):
@@ -603,14 +596,7 @@ with col2:
 # Events are processed earlier at startup via `process_event_queue()`
 
 # Update displays
-stats_paused = False
-if SIM_API_AVAILABLE:
-    try:
-        stats_paused = get_stats().get('paused', False)
-    except Exception:
-        pass
-
-if st.session_state['sim_running'] and not st.session_state['paused'] and not stats_paused:
+if st.session_state['sim_running'] and not st.session_state['paused']:
     # Update block area - get blocks from stats (authoritative source)
     blocks = []
     
