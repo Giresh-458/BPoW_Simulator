@@ -1,8 +1,3 @@
-"""
-Streamlit entrypoint for Proof-of-Work blockchain simulator.
-Provides UI controls and displays simulation results.
-"""
-
 import streamlit as st
 import threading
 import time
@@ -323,14 +318,6 @@ with col1:
     )
     st.session_state['network_delay_ms'] = net_delay_ms
 
-    # Fork Stress Mode toggle (pre-start configuration)
-    stress_col1, stress_col2 = st.columns([1,1])
-    with stress_col1:
-        fork_stress = st.checkbox("Fork Stress Mode", value=st.session_state.get('fork_stress', False))
-        st.session_state['fork_stress'] = fork_stress
-    with stress_col2:
-        st.caption("Sets high delay, low difficulty, and equal high miner rates before start.")
-    
     # Global difficulty slider with human-friendly description
     # Get live difficulty if simulation is running
     live_difficulty = None
@@ -350,16 +337,29 @@ with col1:
         except Exception:
             # If stats retrieval fails, keep the previous/default difficulty
             pass
-    difficulty_value = live_difficulty if live_difficulty is not None else st.session_state.get('difficulty', 4)
     
-    difficulty = st.slider(
+    # Use live difficulty when running, otherwise use slider value or default
+    if st.session_state['sim_running'] and live_difficulty is not None:
+        difficulty_value = live_difficulty
+        difficulty = live_difficulty
+    else:
+        difficulty_value = st.session_state.get('difficulty', 4)
+    
+    # Display difficulty slider (disabled during simulation to show live value)
+    displayed_difficulty = st.slider(
         "Global difficulty (leading zeros)",
         min_value=0,
         max_value=8,
         value=difficulty_value,
-        key="difficulty",
+        key=f"difficulty_slider_{difficulty_value}",  # Dynamic key to force update
         disabled=st.session_state['sim_running']
     )
+    
+    # Update difficulty_value and store slider value
+    if not st.session_state['sim_running']:
+        difficulty = displayed_difficulty
+        difficulty_value = displayed_difficulty  # Sync the value immediately
+        st.session_state['difficulty'] = displayed_difficulty
     
     # Difficulty description
     difficulty_descriptions = {
@@ -531,17 +531,8 @@ with col2:
 
     
     with metrics_col2:
-        # Get live difficulty from simulation if running
-        current_difficulty = difficulty
-        if SIM_API_AVAILABLE:
-            try:
-                stats = get_stats()
-                if stats and 'difficulty' in stats:
-                    current_difficulty = stats['difficulty']
-                    # Removed accidental f-string snippet
-            except Exception:
-                # Keep UI difficulty if stats retrieval fails
-                pass
+        # Display current difficulty metric
+        st.metric("Current Difficulty", difficulty_value)
     avg_bt = None
     fork_rate = 0.0
     net_ms_display = st.session_state.get('network_delay_ms', 100)
@@ -603,62 +594,11 @@ with col2:
         perf3, perf4 = st.columns([1,1])
         with perf3:
             st.session_state['graph_render_every_n'] = st.slider("Render every Nth refresh", 1, 10, int(st.session_state.get('graph_render_every_n', 2)), help="Only draw graph every Nth UI update.")
-        with perf4:
-            st.session_state['graph_simple_mode'] = st.checkbox("Simple graph mode", value=st.session_state.get('graph_simple_mode', False), help="Use simpler styling for heavy loads.")
+        # with perf4:
+        #     st.session_state['graph_simple_mode'] = st.checkbox("Simple graph mode", value=st.session_state.get('graph_simple_mode', False), help="Use simpler styling for heavy loads.")
         # Heavy render toggle to prevent UI freezes
-        st.session_state['graph_enabled'] = st.checkbox("Render graph", value=st.session_state.get('graph_enabled', False), help="Enable to render the SVG graph. Disable if UI feels sluggish.")
+        st.session_state['graph_enabled'] = st.checkbox("Render chain", value=st.session_state.get('graph_enabled', False), help="Enable to render the SVG graph. Disable if UI feels sluggish.")
         block_map_area = st.empty()
-
-    # Manual PoW calculator (educational) inside Overview tab
-    with tab_overview:
-        st.markdown("**Manual PoW Calculator**")
-        calc_col1, calc_col2, calc_col3 = st.columns([2,1,1])
-        with calc_col1:
-            calc_message = st.text_input(
-                "Message to hash",
-                value=st.session_state.get('calc_message', 'Demo Message'),
-                key='calc_message_input'
-            )
-            st.session_state['calc_message'] = calc_message
-        with calc_col2:
-            calc_difficulty = st.slider(
-                "Calc difficulty",
-                min_value=0, max_value=8, value=st.session_state.get('calc_difficulty', difficulty), key='calc_difficulty_slider')
-            st.session_state['calc_difficulty'] = calc_difficulty
-        with calc_col3:
-            run_calc = st.button("🔍 Find Nonce")
-
-    calc_result_area = st.empty()
-    if run_calc:
-        # Perform a bounded PoW search to visualize hashing
-        try:
-            from utils.hash_utils import compute_block_hash, hash_meets_difficulty
-            import time as _t, random as _r
-            start_ts = _t.time()
-            prev_hash_demo = '0'*64
-            height_demo = 1
-            attempts = 0
-            max_attempts = 200000  # safety bound
-            nonce = _r.randint(0, 2**32-1)
-            found = None
-            # Try quickly; yield UI every 5000 attempts
-            while attempts < max_attempts:
-                h = compute_block_hash(prev_hash_demo, height_demo, _t.time(), calc_message, nonce, 'manual')
-                attempts += 1
-                if hash_meets_difficulty(h, calc_difficulty):
-                    found = (nonce, h)
-                    break
-                nonce = (nonce + 1) & 0xFFFFFFFF
-                if attempts % 5000 == 0:
-                    calc_result_area.info(f"Attempts: {attempts}")
-            duration = _t.time() - start_ts
-            if found:
-                n, hval = found
-                calc_result_area.success(f"Found nonce {n} in {attempts} attempts ({duration:.2f}s). Hash: {str(hval)[:16]}…")
-            else:
-                calc_result_area.warning(f"No valid nonce within {max_attempts} attempts. Try lowering difficulty.")
-        except Exception as e:
-            calc_result_area.error(f"Calculator error: {e}")
 
     # Simple block times chart (last 20)
     try:
@@ -704,10 +644,6 @@ if st.session_state['sim_running'] and not st.session_state['paused']:
         block_area.info("No blocks mined yet...")
     
     # Update 2D block visualization
-    # Initialize render cycle counter
-    if 'graph_render_counter' not in st.session_state:
-        st.session_state['graph_render_counter'] = 0
-
     try:
         if st.session_state.get('graph_enabled', False):
             try:
@@ -720,22 +656,19 @@ if st.session_state['sim_running'] and not st.session_state['paused']:
                 if accepted_blocks < int(st.session_state.get('graph_min_blocks_to_render', 12)):
                     block_map_area.info("Graph will render after more blocks are mined...")
                 else:
-                    # Only render every Nth refresh to reduce load
-                    st.session_state['graph_render_counter'] += 1
-                    n = int(st.session_state.get('graph_render_every_n', 2))
-                    if st.session_state['graph_render_counter'] % max(1, n) == 0:
-                        svg = _render_2d_blocks(stats['fork_tree'])
-                        centered_html = f"""
-                        <div style='display:flex; justify-content:center; align-items:flex-start; padding:12px;'>
-                            <div style='width:100%; max-width:1400px; height:800px; overflow:auto; border:1px solid #e5e7eb; border-radius:8px; background:#ffffff;'>
-                                {svg}
-                            </div>
+                    # Render graph on every refresh for smooth updates (no dimming)
+                    svg = _render_2d_blocks(stats['fork_tree'])
+                    centered_html = f"""
+                    <div style='display:flex; justify-content:center; align-items:flex-start; padding:12px;'>
+                        <div style='width:100%; max-width:1400px; height:800px; overflow:auto; border:1px solid #e5e7eb; border-radius:8px; background:#ffffff;'>
+                            {svg}
                         </div>
-                        """
-                        import streamlit.components.v1 as components
-                        components.html(centered_html, height=820, scrolling=True)
-                        # Store in session state for paused view
-                        st.session_state['last_fork_tree'] = stats['fork_tree']
+                    </div>
+                    """
+                    import streamlit.components.v1 as components
+                    components.html(centered_html, height=820, scrolling=True)
+                    # Store in session state for paused view
+                    st.session_state['last_fork_tree'] = stats['fork_tree']
             else:
                 block_map_area.info("Waiting for blocks...")
         else:
